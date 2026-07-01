@@ -131,7 +131,6 @@ Rationale:
 
 Trade-off: we write more layout code than we would with a library, but we avoid a
 heavy native dependency and get exactly the visuals and animations required.
-(An unused `react-native-chart-kit` dependency from early exploration was removed.)
 
 ---
 
