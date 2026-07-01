@@ -9,13 +9,13 @@ export const InsightFormSchema = z.object({
     .string()
     .min(1, 'Description is required'),
   priority: z.enum(['P1', 'P2', 'P3', 'P4'], {
-    errorMap: () => ({ message: 'Priority is required' }),
+    message: 'Priority is required',
   }),
   stage: z.enum(['Observation', 'Insight', 'Actionable', 'Impact']),
   categoryId: z.string().nullable().optional(),
   hcpId: z.string().nullable().optional(),
   drugName: z.string().nullable().optional(),
-  tagIds: z.array(z.string()).default([]),
+  tagIds: z.array(z.string()),
 });
 
 export type InsightFormValues = z.infer<typeof InsightFormSchema>;
