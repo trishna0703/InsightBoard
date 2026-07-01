@@ -21,6 +21,7 @@ interface FilterBarProps {
   activeFilterCount: number;
   chips: ActiveChip[];
   onOpenSheet: () => void;
+  onClearAll: () => void;
 }
 
 export default function FilterBar({
@@ -29,6 +30,7 @@ export default function FilterBar({
   activeFilterCount,
   chips,
   onOpenSheet,
+  onClearAll,
 }: FilterBarProps) {
   return (
     <View style={styles.wrapper}>
@@ -76,6 +78,13 @@ export default function FilterBar({
               <Text style={styles.activeChipX}> ✕</Text>
             </TouchableOpacity>
           ))}
+          <TouchableOpacity
+            style={styles.clearAllBtn}
+            onPress={onClearAll}
+            accessibilityLabel="Clear all filters"
+          >
+            <Text style={styles.clearAllText}>Clear all</Text>
+          </TouchableOpacity>
         </ScrollView>
       )}
     </View>
@@ -104,6 +113,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 9,
     fontSize: 14,
+    height:40,
     color: Colors.textPrimary,
     borderWidth: 1,
     borderColor: Colors.border,
@@ -155,5 +165,16 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: Colors.primary[500],
     fontWeight: "700",
+  },
+  clearAllBtn: {
+    justifyContent: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  clearAllText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: Colors.system.error,
+    textDecorationLine: "underline",
   },
 });

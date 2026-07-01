@@ -8,6 +8,9 @@ import AppNavigator from "./src/navigation/AppNavigator";
 import { View, ActivityIndicator } from "react-native";
 import { Colors } from "./src/constants/colors";
 import Toast from "react-native-toast-message";
+import { SafeAreaProvider } from "react-native-safe-area-context";
+import ErrorBoundary from "./src/components/common/ErrorBoundary";
+import OfflineBanner from "./src/components/common/OfflineBanner";
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -37,9 +40,14 @@ export default function App() {
   }
 
   return (
-    <ApolloProvider client={apolloClient}>
-      {session ? <AppNavigator /> : <LoginScreen />}
-      <Toast />
-    </ApolloProvider>
+    <ErrorBoundary>
+      <SafeAreaProvider>
+        <ApolloProvider client={apolloClient}>
+          {session ? <AppNavigator /> : <LoginScreen />}
+          <OfflineBanner />
+          <Toast />
+        </ApolloProvider>
+      </SafeAreaProvider>
+    </ErrorBoundary>
   );
 }

@@ -5,13 +5,15 @@ import { Text } from "react-native";
 import BoardScreen from "../screens/BoardScreen";
 import AnalyticsScreen from "../screens/AnalyticsScreen";
 import { Colors } from "../constants/colors";
+import { FiltersProvider } from "../context/FiltersContext";
 
 const Tab = createBottomTabNavigator();
 
 export default function AppNavigator() {
   return (
     <NavigationContainer>
-      <Tab.Navigator
+      <FiltersProvider>
+        <Tab.Navigator
         screenOptions={{
           tabBarActiveTintColor: Colors.primary[500],
           tabBarInactiveTintColor: Colors.textSecondary,
@@ -43,7 +45,8 @@ export default function AppNavigator() {
             ),
           }}
         />
-      </Tab.Navigator>
+        </Tab.Navigator>
+      </FiltersProvider>
     </NavigationContainer>
   );
 }

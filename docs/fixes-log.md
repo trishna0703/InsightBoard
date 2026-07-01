@@ -99,6 +99,42 @@ through heavy mocks:
 - `src/hooks/useActivityFeed.ts` — exported `transformActivities` (activity feed
   shaping, Module 5.3).
 
+## Audit gap-closure (post full requirements audit)
+
+Fixes for the gaps found when auditing the codebase against the assignment:
+
+- **M1.4 search title-only → title + description.** `buildInsightsFilter`
+  ([useInsights.ts](../src/hooks/useInsights.ts)) now emits a pg_graphql `or`
+  group over title+description, AND-ed with the other clauses. Both the board
+  query and the optimistic-move cache read use this same builder, so cache keys
+  stay identical. Filter tests updated.
+- **M1.4/6.3 "Clear all" link.** Added to the active-chip bar in
+  [FilterBar.tsx](../src/components/board/FilterBar.tsx) (`onClearAll`).
+- **M6.3 filters persist across navigation.** New
+  [FiltersContext](../src/context/FiltersContext.tsx) holds filter state above the
+  navigator and mirrors to AsyncStorage; `BoardScreen` consumes it. Survives tab
+  switches and app restarts.
+- **A11Y-2 long-press "Move to…" action sheet.** New
+  [MoveActionSheet.tsx](../src/components/board/MoveActionSheet.tsx); long-press
+  now opens an accessible sheet offering direct stage moves AND entry to
+  drag-to-reorder (resolves the 6.2-vs-A11Y "both want long-press" tension).
+- **ERR-1 global error boundary.** New
+  [ErrorBoundary.tsx](../src/components/common/ErrorBoundary.tsx) wraps the app in
+  [App.tsx](../App.tsx) with fallback UI + Retry.
+- **ERR-4 offline banner.** Installed `@react-native-community/netinfo`; new
+  [OfflineBanner.tsx](../src/components/common/OfflineBanner.tsx) shows the
+  required banner while disconnected. Added `SafeAreaProvider` at the root (the
+  banner uses `useSafeAreaInsets`).
+- **Cleanup.** Removed the unused `react-native-chart-kit` dependency (charts are
+  custom `View`/`Animated` components).
+- **Docs.** Wrote a full [README.md](../README.md) (setup, per-module status,
+  bonus status, testing) and [ARCHITECTURE.md](../ARCHITECTURE.md) (real-time
+  model, GraphQL/cache discipline, state management, and the charts-library
+  justification).
+
+Not done (optional bonuses, out of scope unless requested): B1 custom
+fields/voice-to-text, B2 OpenFDA, B3 full VoiceOver.
+
 ## Test assertion gotchas worth remembering
 
 - **`renderHook` is async in RTL 14** — must `await renderHook(...)` and

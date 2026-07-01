@@ -139,6 +139,7 @@ export function useUpdateInsight() {
           if (serverNode && serverNode.updatedAt !== original.updatedAt) {
             throw new ConflictError(findConflictingFields(values, serverNode, client), serverNode);
           }
+          
         }
 
         await updateInsightFields({

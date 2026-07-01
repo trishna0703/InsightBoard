@@ -180,18 +180,20 @@ export default function FilterSheet({ filters, onChange }: FilterSheetProps) {
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
-        {/* Reset */}
-        <TouchableOpacity
-          style={styles.resetBtn}
-          onPress={() => {
-            setHcpSearch("");
-            setShowHcpSuggestions(false);
-            onChange(DEFAULT_FILTER);
-          }}
-          accessibilityLabel="Reset all filters"
-        >
-          <Text style={styles.resetText}>Reset all</Text>
-        </TouchableOpacity>
+        <View style={styles.headingWrapper}>
+          <Text style={styles.heading}>Filter Insights</Text>
+          {/* Reset */}
+          <TouchableOpacity
+            onPress={() => {
+              setHcpSearch("");
+              setShowHcpSuggestions(false);
+              onChange(DEFAULT_FILTER);
+            }}
+            accessibilityLabel="Reset all filters"
+          >
+            <Text style={styles.resetText}>Reset all</Text>
+          </TouchableOpacity>
+        </View>
 
         {/* ── Date Range ─────────────────────────────────────────── */}
         <Text style={styles.sectionLabel}>DATE RANGE</Text>
@@ -444,7 +446,12 @@ export default function FilterSheet({ filters, onChange }: FilterSheetProps) {
 const styles = StyleSheet.create({
   scroll: { flex: 1 },
   content: { padding: 16 },
-  resetBtn: { alignSelf: "flex-end", marginBottom: 4 },
+  heading: { fontSize: 24, fontWeight: 600, width: "auto" },
+  headingWrapper: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
   resetText: { fontSize: 13, color: Colors.system.error, fontWeight: "600" },
   sectionLabel: {
     fontSize: 11,

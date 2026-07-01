@@ -52,7 +52,9 @@ export function countActiveFilters(f: FilterInput): number {
 export interface InsightsQueryFilter {
   stage: { eq: string };
   priority?: { in: Priority[] };
-  title?: { ilike: string };
+  // Free-text search spans title AND description via a pg_graphql OR group,
+  // AND-ed with the other top-level clauses (stage, priority, …).
+  or?: [{ title: { ilike: string } }, { description: { ilike: string } }];
   categoryId?: { eq: string };
   hcpId?: { eq: string };
   createdAt?: { gte?: string; lte?: string };
@@ -67,7 +69,10 @@ export function buildInsightsFilter(
   };
 
   if (filters.priorities.length > 0) f.priority = { in: filters.priorities };
-  if (filters.search.trim()) f.title = { ilike: `%${filters.search.trim()}%` };
+  if (filters.search.trim()) {
+    const term = `%${filters.search.trim()}%`;
+    f.or = [{ title: { ilike: term } }, { description: { ilike: term } }];
+  }
   if (filters.categoryId) f.categoryId = { eq: filters.categoryId };
   if (filters.hcpId) f.hcpId = { eq: filters.hcpId };
 

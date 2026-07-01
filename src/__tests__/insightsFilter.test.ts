@@ -28,14 +28,17 @@ describe("buildInsightsFilter", () => {
     expect(f.priority).toEqual({ in: ["P1", "P2"] });
   });
 
-  it("adds a case-insensitive title search wrapped in wildcards", () => {
+  it("searches title AND description, case-insensitive, wrapped in wildcards", () => {
     const f = buildInsightsFilter("Observation", filter({ search: "dosing" }));
-    expect(f.title).toEqual({ ilike: "%dosing%" });
+    expect(f.or).toEqual([
+      { title: { ilike: "%dosing%" } },
+      { description: { ilike: "%dosing%" } },
+    ]);
   });
 
   it("trims whitespace-only searches so they add no clause", () => {
     const f = buildInsightsFilter("Observation", filter({ search: "   " }));
-    expect(f.title).toBeUndefined();
+    expect(f.or).toBeUndefined();
   });
 
   it("adds category and hcp equality clauses", () => {
@@ -77,7 +80,10 @@ describe("buildInsightsFilter", () => {
     expect(f).toEqual({
       stage: { eq: "impact" },
       priority: { in: ["P1"] },
-      title: { ilike: "%cardio%" },
+      or: [
+        { title: { ilike: "%cardio%" } },
+        { description: { ilike: "%cardio%" } },
+      ],
       categoryId: { eq: "cat-1" },
       hcpId: { eq: "hcp-1" },
       createdAt: { gte: "2026-06-01T00:00:00Z" },
