@@ -40,7 +40,7 @@ export class ConflictError extends Error {
   }
 }
 
-function findConflictingFields(
+export function findConflictingFields(
   values: InsightFormValues,
   node: DetailNode,
   client: ApolloClient<object>,

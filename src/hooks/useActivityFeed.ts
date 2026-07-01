@@ -123,7 +123,7 @@ export function useActivityFeed(currentUserId: string | null) {
   return { activities, unreadCount, loading, markRead, markClosed, refetch };
 }
 
-function transformActivities(data: Record<string, unknown>): ActivityEntry[] {
+export function transformActivities(data: Record<string, unknown>): ActivityEntry[] {
   const collection = data?.insightActivitiesCollection as {
     edges: { node: Record<string, unknown> }[];
   } | null;

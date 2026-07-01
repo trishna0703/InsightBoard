@@ -12,7 +12,9 @@ const httpLink = createHttpLink({
   uri: `${process.env.EXPO_PUBLIC_SUPABASE_URL}/graphql/v1`,
 });
 
-const authLink = setContext(async (_, { headers }: { headers: Record<string, string> }) => {
+const authLink = setContext(async (_operation, prevContext) => {
+  // prevContext is Apollo's loosely-typed context bag; headers may be absent.
+  const headers = (prevContext.headers ?? {}) as Record<string, string>;
   const {
     data: { session },
   } = await supabase.auth.getSession();

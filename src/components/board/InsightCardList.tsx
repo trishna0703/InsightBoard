@@ -5,7 +5,7 @@ import { Insight, InsightStage } from "../../types";
 import SwipeableInsightCard from "./SwipeableInsightCard";
 import { Colors } from "../../constants/colors";
 import { InsightsQueryFilter } from "../../hooks/useInsights";
-import { BroadcastState } from "@/hooks/useBroadcast";
+import { BroadcastState } from "../../hooks/useBroadcast";
 
 interface InsightCardListProps {
   insights: Insight[];
