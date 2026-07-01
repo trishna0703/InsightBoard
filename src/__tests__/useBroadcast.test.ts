@@ -154,3 +154,85 @@ describe("useBroadcast — outgoing emit", () => {
     expect(latestChannel().send).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("useBroadcast — late-joiner re-announce", () => {
+  it("replays my active signal when another user joins the same insight", async () => {
+    const { result } = await renderHook(() => useBroadcast(ME));
+
+    // I'm already viewing i1.
+    result.current.emit("viewing", "i1", "start");
+    latestChannel().send.mockClear();
+
+    // Bob joins and starts viewing i1 → I should re-announce my presence as a reply.
+    await receiveSignal({
+      userId: "bob",
+      userName: "Bob",
+      insightId: "i1",
+      type: "viewing",
+      action: "start",
+    });
+
+    expect(latestChannel().send).toHaveBeenCalledWith({
+      type: "broadcast",
+      event: "signal",
+      payload: {
+        userId: ME.id,
+        userName: ME.name,
+        insightId: "i1",
+        type: "viewing",
+        action: "start",
+        reply: true,
+      },
+    });
+  });
+
+  it("does not re-announce for a different insight", async () => {
+    const { result } = await renderHook(() => useBroadcast(ME));
+    result.current.emit("viewing", "i1", "start");
+    latestChannel().send.mockClear();
+
+    await receiveSignal({
+      userId: "bob",
+      userName: "Bob",
+      insightId: "i2", // different insight
+      type: "viewing",
+      action: "start",
+    });
+
+    expect(latestChannel().send).not.toHaveBeenCalled();
+  });
+
+  it("does not reply to a reply (no ping-pong)", async () => {
+    const { result } = await renderHook(() => useBroadcast(ME));
+    result.current.emit("viewing", "i1", "start");
+    latestChannel().send.mockClear();
+
+    await receiveSignal({
+      userId: "bob",
+      userName: "Bob",
+      insightId: "i1",
+      type: "viewing",
+      action: "start",
+      reply: true, // already a reply
+    });
+
+    expect(latestChannel().send).not.toHaveBeenCalled();
+  });
+
+  it("stops replaying once I stop viewing", async () => {
+    const { result } = await renderHook(() => useBroadcast(ME));
+    result.current.emit("viewing", "i1", "start");
+    result.current.emit("viewing", "i1", "stop");
+    latestChannel().send.mockClear();
+
+    await receiveSignal({
+      userId: "bob",
+      userName: "Bob",
+      insightId: "i1",
+      type: "viewing",
+      action: "start",
+    });
+
+    expect(latestChannel().send).not.toHaveBeenCalled();
+  });
+});

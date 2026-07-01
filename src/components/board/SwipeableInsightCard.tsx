@@ -1,4 +1,4 @@
-import React, { useRef, useCallback } from "react";
+import React, { useRef, useCallback, useEffect } from "react";
 import {
   View,
   Text,
@@ -104,6 +104,20 @@ export default function SwipeableInsightCard({
   };
 
   const isDraggingRef = useRef(false);
+
+  // FlashList recycles this component instance for different insights. If a card
+  // flew off-screen (translateX/scale/panelOpacity left at their end-state) and
+  // the instance is then reused for another insight — e.g. after a local swipe
+  // or a peer's real-time move removes a row — the recycled card renders
+  // off-screen inside a full-height cell, which shows up as an empty GAP in the
+  // list. Reset the per-card animation state whenever the underlying insight
+  // changes so a recycled cell always starts from a clean, on-screen position.
+  useEffect(() => {
+    translateX.setValue(0);
+    cardScale.setValue(1);
+    panelOpacity.setValue(1);
+    isDraggingRef.current = false;
+  }, [insight.id, translateX, cardScale, panelOpacity]);
 
   const snapBack = useCallback(() => {
     Animated.parallel([

@@ -107,7 +107,9 @@ const DIFFABLE_FIELDS: Array<{
 
 export function useUpdateInsight() {
   const client = useApolloClient();
-  const [updateInsightFields] = useMutation(UPDATE_INSIGHT_FIELDS);
+  const [updateInsightFields] = useMutation<{
+    updateInsightsCollection: { affectedCount: number };
+  }>(UPDATE_INSIGHT_FIELDS);
   const [createActivity] = useMutation(CREATE_INSIGHT_ACTIVITY);
   const [deleteTags] = useMutation(DELETE_INSIGHT_TAGS);
   const [insertTags] = useMutation(INSERT_INSIGHT_TAGS);
@@ -127,24 +129,18 @@ export function useUpdateInsight() {
       }
 
       try {
-        if (!force) {
-          const serverResult = await client.query<{
-            insightsCollection: { edges: { node: DetailNode }[] };
-          }>({
-            query: GET_INSIGHT_DETAIL,
-            variables: { id: original.id },
-            fetchPolicy: 'network-only',
-          });
-          const serverNode = serverResult.data?.insightsCollection?.edges?.[0]?.node;
-          if (serverNode && serverNode.updatedAt !== original.updatedAt) {
-            throw new ConflictError(findConflictingFields(values, serverNode, client), serverNode);
-          }
-          
-        }
+        // Atomic compare-and-swap: unless we're forcing (conflict already
+        // resolved), the update only lands if updatedAt still matches the value
+        // we loaded. This makes the check-and-write a single DB operation and
+        // closes the read-then-write race where two near-simultaneous saves
+        // could both pass a separate pre-check and both overwrite each other.
+        const filter = force
+          ? { id: { eq: original.id } }
+          : { id: { eq: original.id }, updatedAt: { eq: original.updatedAt } };
 
-        await updateInsightFields({
+        const res = await updateInsightFields({
           variables: {
-            filter: { id: { eq: original.id } },
+            filter,
             set: {
               title: values.title,
               description: values.description,
@@ -158,6 +154,25 @@ export function useUpdateInsight() {
           refetchQueries: [{ query: GET_INSIGHT_DETAIL, variables: { id: original.id } }],
           awaitRefetchQueries: false,
         });
+
+        // affectedCount === 0 means the row changed since we loaded it → first
+        // writer won, we are the stale writer. Fetch the current server state to
+        // drive the field-by-field conflict modal.
+        const affected = res.data?.updateInsightsCollection?.affectedCount ?? 0;
+        if (!force && affected === 0) {
+          const serverResult = await client.query<{
+            insightsCollection: { edges: { node: DetailNode }[] };
+          }>({
+            query: GET_INSIGHT_DETAIL,
+            variables: { id: original.id },
+            fetchPolicy: 'network-only',
+          });
+          const serverNode = serverResult.data?.insightsCollection?.edges?.[0]?.node;
+          if (serverNode) {
+            throw new ConflictError(findConflictingFields(values, serverNode, client), serverNode);
+          }
+          throw new Error('This insight no longer exists.');
+        }
       } catch (err) {
         if (err instanceof ConflictError) throw err;
         const msg = err instanceof Error ? err.message : String(err);

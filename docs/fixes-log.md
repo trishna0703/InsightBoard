@@ -135,6 +135,61 @@ Fixes for the gaps found when auditing the codebase against the assignment:
 Not done (optional bonuses, out of scope unless requested): B1 custom
 fields/voice-to-text, B2 OpenFDA, B3 full VoiceOver.
 
+## Real-time bug — FlashList recycling left gaps after moves
+
+- **Symptom:** moving insights between stages (especially two devices at once)
+  left an empty gap where each moved card had been — the cell kept its height but
+  showed no card.
+- **Root cause:** `SwipeableInsightCard` and `InsightCard` keep per-card
+  animation state (`translateX`/`cardScale`/`panelOpacity`, and the arrival
+  `fadeAnim`) in `useRef`. FlashList **recycles** a view instance for a different
+  insight without remounting, so a card that flew off-screen (end-state
+  transform) or an unfinished fade left the recycled cell rendering off-screen /
+  invisible while still occupying height.
+- **Fix:** reset the animation state whenever `insight.id` changes (i.e. on every
+  recycle). [SwipeableInsightCard.tsx](../src/components/board/SwipeableInsightCard.tsx)
+  resets translateX/scale/opacity + drag flag; [InsightCard.tsx](../src/components/board/InsightCard.tsx)
+  keys its fade effect on `insight.id`, fading genuine arrivals in from 0 and
+  forcing opacity back to 1 otherwise. Verified `tsc` + tests; needs a two-device
+  visual confirmation.
+
+## Real-time bug — edit conflict never fired (TOCTOU race)
+
+- **Symptom:** two accounts editing the same insight at once both saved
+  successfully with no conflict modal; last write silently won and the activity
+  log showed two separate edits.
+- **Root cause:** `useUpdateInsight` did a **read-then-write**: a separate
+  `GET_INSIGHT_DETAIL` (network-only) read compared `updatedAt`, then an
+  *unconditional* update. Near-simultaneous saves both read the same pre-write
+  `updatedAt`, both passed the check, and both wrote — a classic
+  time-of-check/time-of-use race.
+- **Fix:** made it an **atomic compare-and-swap** — the update filter now
+  includes `updatedAt: { eq: original.updatedAt }`, so the write only lands if
+  the row is unchanged; a conflict is detected from `affectedCount === 0` (then
+  we fetch the current server row to drive the field-by-field modal). pg_graphql
+  compares timestamptz by value, so the `eq` is exact when unchanged and never
+  false-positives. Force-save (Keep Mine / Merge) drops the `updatedAt` clause.
+  [useUpdateInsight.ts](../src/hooks/useUpdateInsight.ts). Verified `tsc` +
+  tests; needs a two-device confirmation.
+- **Note:** `useMoveInsight` (swipe conflict) still uses the older read-then-write
+  pre-check and has the same race class — not yet converted to CAS.
+
+## Real-time bug — late joiner didn't see existing viewers
+
+- **Symptom:** device 1 opens an insight; device 2 opens the same insight later.
+  Device 1 shows "another viewer", but device 2 never learns device 1 was
+  already viewing.
+- **Root cause:** viewing/editing indicators use Supabase **Broadcast**, which is
+  fire-and-forget — it does not replay past events to clients that subscribe
+  later. Device 2 simply missed device 1's earlier "start viewing" signal.
+- **Fix:** a re-announce handshake in [useBroadcast.ts](../src/hooks/useBroadcast.ts).
+  Each client tracks its own active viewing/editing signals; when it receives
+  someone else's non-reply "start" for the same insight, it replays its active
+  signal back marked `reply: true`. Replies update state but don't trigger
+  further replies (no ping-pong), and only same-insight signals are replayed.
+  So a late joiner is immediately answered by everyone already on that insight
+  (viewers and editors alike). Covered by 4 new tests; needs two-device confirm.
+
 ## Test assertion gotchas worth remembering
 
 - **`renderHook` is async in RTL 14** — must `await renderHook(...)` and

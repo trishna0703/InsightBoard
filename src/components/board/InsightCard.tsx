@@ -25,19 +25,26 @@ export default function InsightCard({
   highlighted = false,
 }: InsightCardProps) {
   // Play a fade-in when this card just arrived from another user's create.
-  const isNewArrival = useRef(recentlyArrivedIds.has(insight.id)).current;
-  const fadeAnim = useRef(new Animated.Value(isNewArrival ? 0 : 1)).current;
+  // Keyed on insight.id (not mount) because FlashList recycles this instance for
+  // different cards: on recycle we must either fade a genuinely-new arrival in
+  // from 0, or force opacity back to 1 for a normal card — otherwise a recycled
+  // cell can be left invisible.
+  const fadeAnim = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
-    if (!isNewArrival) return;
-    // Remove immediately so a re-mount (FlashList recycle) doesn't re-animate.
-    recentlyArrivedIds.delete(insight.id);
-    Animated.timing(fadeAnim, {
-      toValue: 1,
-      duration: 600,
-      useNativeDriver: true,
-    }).start();
-  }, []); // mount only
+    if (recentlyArrivedIds.has(insight.id)) {
+      // Consume the marker so a later recycle doesn't re-animate this card.
+      recentlyArrivedIds.delete(insight.id);
+      fadeAnim.setValue(0);
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 600,
+        useNativeDriver: true,
+      }).start();
+    } else {
+      fadeAnim.setValue(1);
+    }
+  }, [insight.id, fadeAnim]);
 
   return (
     <Animated.View style={{ opacity: fadeAnim }}>

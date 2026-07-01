@@ -16,6 +16,14 @@ export interface UserSignal {
   type: SignalType;
 }
 
+// Wire payload: a signal plus its action and an optional `reply` flag.
+// `reply: true` marks a re-announcement sent in response to someone else's join,
+// so it updates their state without triggering yet another reply (no ping-pong).
+type SignalMessage = UserSignal & {
+  action: "start" | "stop";
+  reply?: boolean;
+};
+
 export interface BroadcastState {
   viewing: Record<string, UserSignal[]>; // insightId → users viewing
   editing: Record<string, UserSignal[]>; // insightId → users editing
@@ -33,6 +41,37 @@ export function useBroadcast(currentUser: { id: string; name: string } | null) {
 
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const throttleRef = useRef<Record<string, number>>({});
+  // My currently-active viewing/editing signals (keyed `type:insightId`).
+  // Broadcast doesn't replay past events, so when a user joins AFTER me they
+  // never saw my original "start". We replay these to them on demand.
+  const activeSignalsRef = useRef<
+    Map<string, { type: SignalType; insightId: string }>
+  >(new Map());
+
+  const sendSignal = useCallback(
+    (msg: {
+      type: SignalType;
+      insightId: string;
+      action: "start" | "stop";
+      reply?: boolean;
+    }) => {
+      if (!currentUser || !channelRef.current) return;
+      channelRef.current.send({
+        type: "broadcast",
+        event: "signal",
+        payload: {
+          userId: currentUser.id,
+          userName: currentUser.name,
+          insightId: msg.insightId,
+          type: msg.type,
+          action: msg.action,
+          // Only include the flag on replies so normal signals stay unchanged.
+          ...(msg.reply ? { reply: true } : {}),
+        },
+      });
+    },
+    [currentUser],
+  );
 
   useEffect(() => {
     if (!currentUser) return;
@@ -42,7 +81,7 @@ export function useBroadcast(currentUser: { id: string; name: string } | null) {
 
     channel
       .on("broadcast", { event: "signal" }, ({ payload }) => {
-        const signal = payload as UserSignal & { action: "start" | "stop" };
+        const signal = payload as SignalMessage;
 
         // Ignore our own signals
         if (signal.userId === currentUser.id) return;
@@ -73,6 +112,22 @@ export function useBroadcast(currentUser: { id: string; name: string } | null) {
             }
           }
         });
+
+        // Late-joiner fix: when another user announces they've STARTED
+        // viewing/editing an insight, re-announce any of my own active signals
+        // for that same insight so they learn I'm already here. Mark as a reply
+        // so it doesn't bounce back and forth.
+        if (
+          !signal.reply &&
+          signal.action === "start" &&
+          signal.type !== "swiping"
+        ) {
+          activeSignalsRef.current.forEach(({ type, insightId }) => {
+            if (insightId === signal.insightId) {
+              sendSignal({ type, insightId, action: "start", reply: true });
+            }
+          });
+        }
       })
       .subscribe();
 
@@ -80,33 +135,31 @@ export function useBroadcast(currentUser: { id: string; name: string } | null) {
       supabase.removeChannel(channel);
       channelRef.current = null;
     };
-  }, [currentUser]);
+  }, [currentUser, setState, sendSignal]);
 
   const emit = useCallback(
     (type: SignalType, insightId: string, action: "start" | "stop") => {
       if (!currentUser || !channelRef.current) return;
 
-      // Throttle high-frequency signals like swiping
       if (type === "swiping") {
+        // Throttle high-frequency swipe signals.
         const key = `${type}:${insightId}:${action}`;
         const now = Date.now();
         if (now - (throttleRef.current[key] ?? 0) < THROTTLE_MS) return;
         throttleRef.current[key] = now;
+      } else {
+        // Track viewing/editing so we can replay to users who join later.
+        const key = `${type}:${insightId}`;
+        if (action === "start") {
+          activeSignalsRef.current.set(key, { type, insightId });
+        } else {
+          activeSignalsRef.current.delete(key);
+        }
       }
 
-      channelRef.current.send({
-        type: "broadcast",
-        event: "signal",
-        payload: {
-          userId: currentUser.id,
-          userName: currentUser.name,
-          insightId,
-          type,
-          action,
-        },
-      });
+      sendSignal({ type, insightId, action });
     },
-    [currentUser],
+    [currentUser, sendSignal],
   );
 
   return { state, emit };
