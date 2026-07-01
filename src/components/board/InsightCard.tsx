@@ -15,12 +15,14 @@ interface InsightCardProps {
   insight: Insight;
   onPress: (insight: Insight) => void;
   onLongPress: (insight: Insight) => void;
+  highlighted?: boolean;
 }
 
 export default function InsightCard({
   insight,
   onPress,
   onLongPress,
+  highlighted = false,
 }: InsightCardProps) {
   // Play a fade-in when this card just arrived from another user's create.
   const isNewArrival = useRef(recentlyArrivedIds.has(insight.id)).current;
@@ -40,7 +42,7 @@ export default function InsightCard({
   return (
     <Animated.View style={{ opacity: fadeAnim }}>
     <TouchableOpacity
-      style={styles.card}
+      style={[styles.card, highlighted && styles.cardHighlighted]}
       onPress={() => onPress(insight)}
       onLongPress={() => onLongPress(insight)}
       accessibilityLabel={`Insight: ${insight.title}, Priority ${insight.priority}, ${insight.stage}`}
@@ -161,5 +163,9 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: Colors.neutral[700],
     fontWeight: "500",
+  },
+  cardHighlighted: {
+    borderWidth: 2,
+    borderColor: Colors.primary[500],
   },
 });

@@ -16,6 +16,8 @@ import {
   getPrevStage,
 } from "../../hooks/useMoveInsight";
 import { InsightsQueryFilter } from "../../hooks/useInsights";
+import { BroadcastState } from "../../hooks/useBroadcast";
+import CardOverlays from "./CardOverlays";
 
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.25;
@@ -28,41 +30,59 @@ function rubberBand(dx: number): number {
 
 interface SwipeableInsightCardProps {
   insight: Insight;
-  // The exact filter the parent list's LIST_INSIGHTS query is using for
-  // this stage — required so moveInsight reads/writes the correct cache
-  // entry. Comes from useInsights' `filter` return value.
   filter: InsightsQueryFilter;
   onPress: (insight: Insight) => void;
   onLongPress: (insight: Insight) => void;
   onDragStart?: () => void;
   onDragEnd?: () => void;
+  broadcastState?: BroadcastState;
+  onEmitSignal?: (
+    type: "swiping",
+    insightId: string,
+    action: "start" | "stop",
+  ) => void;
+  onEditAnyway?: (insight: Insight) => void;
+  highlighted?: boolean;
 }
 
 export default function SwipeableInsightCard({
   insight,
   filter,
-  onPress,
-  onLongPress,
   onDragStart,
+  onLongPress,
   onDragEnd,
+  onEditAnyway,
+  broadcastState,
+  onEmitSignal,
+  onPress,
+  highlighted,
 }: SwipeableInsightCardProps) {
   const translateX = useRef(new Animated.Value(0)).current;
   const cardScale = useRef(new Animated.Value(1)).current;
   const panelOpacity = useRef(new Animated.Value(1)).current;
   const { moveInsight } = useMoveInsight();
 
-  // Mutable ref so the pan responder (created once) always reads fresh values
+  const viewers = broadcastState?.viewing[insight.id] ?? [];
+  const editors = broadcastState?.editing[insight.id] ?? [];
+  const isSwiping = broadcastState?.swiping.has(insight.id) ?? false;
+
   const stateRef = useRef({
     insight,
     filter,
     moveInsight,
     onDragStart,
     onDragEnd,
+    onEmitSignal,
   });
-  stateRef.current = { insight, filter, moveInsight, onDragStart, onDragEnd };
+  stateRef.current = {
+    insight,
+    filter,
+    moveInsight,
+    onDragStart,
+    onDragEnd,
+    onEmitSignal,
+  };
 
-  // True once we've actually been granted the gesture — used to refuse
-  // termination requests from the list while a drag is in progress.
   const isDraggingRef = useRef(false);
 
   const snapBack = useCallback(() => {
@@ -89,7 +109,7 @@ export default function SwipeableInsightCard({
   }, [translateX, cardScale, panelOpacity]);
 
   const flyOff = useCallback(
-    (direction: "left" | "right", onComplete: () => void) => {
+    (direction: "left" | "right", onComplete: () => Promise<void> | void) => {
       Animated.parallel([
         Animated.timing(translateX, {
           toValue:
@@ -104,12 +124,22 @@ export default function SwipeableInsightCard({
         }),
         Animated.timing(panelOpacity, {
           toValue: 0,
-          duration: 180, // ducks out slightly before the fly-off finishes
+          duration: 180,
           useNativeDriver: true,
         }),
-      ]).start(() => onComplete());
+      ]).start(async () => {
+        try {
+          await onComplete();
+        } catch {
+          // Move was rejected (conflict or network error) — spring the card back.
+          translateX.setValue(
+            direction === "right" ? SCREEN_WIDTH * 1.3 : -SCREEN_WIDTH * 1.3,
+          );
+          snapBack();
+        }
+      });
     },
-    [translateX, cardScale, panelOpacity],
+    [translateX, cardScale, panelOpacity, snapBack],
   );
 
   const panResponder = useRef(
@@ -122,7 +152,11 @@ export default function SwipeableInsightCard({
 
       onPanResponderGrant: () => {
         isDraggingRef.current = true;
-        stateRef.current.onDragStart?.();
+        stateRef.current.onEmitSignal?.(
+          "swiping",
+          stateRef.current.insight.id,
+          "start",
+        );
         translateX.stopAnimation();
         cardScale.stopAnimation();
         Animated.spring(cardScale, {
@@ -147,7 +181,11 @@ export default function SwipeableInsightCard({
       },
       onPanResponderRelease: (_, g) => {
         isDraggingRef.current = false;
-        stateRef.current.onDragEnd?.();
+        stateRef.current.onEmitSignal?.(
+          "swiping",
+          stateRef.current.insight.id,
+          "stop",
+        );
 
         const { insight, filter, moveInsight } = stateRef.current;
         const nextStage = getNextStage(insight.stage);
@@ -171,7 +209,11 @@ export default function SwipeableInsightCard({
       },
       onPanResponderTerminate: () => {
         isDraggingRef.current = false;
-        stateRef.current.onDragEnd?.();
+        stateRef.current.onEmitSignal?.(
+          "swiping",
+          stateRef.current.insight.id,
+          "stop",
+        );
         snapBack();
       },
     }),
@@ -204,6 +246,14 @@ export default function SwipeableInsightCard({
 
   return (
     <View style={styles.container}>
+      <CardOverlays
+        insightId={insight.id}
+        viewers={viewers}
+        editors={editors}
+        isSwiping={isSwiping}
+        onEditAnywayPress={() => onEditAnyway?.(insight)}
+      />
+
       {nextStage && (
         <Animated.View
           style={[
@@ -242,6 +292,7 @@ export default function SwipeableInsightCard({
           insight={insight}
           onPress={onPress}
           onLongPress={onLongPress}
+          highlighted={highlighted}
         />
       </Animated.View>
     </View>

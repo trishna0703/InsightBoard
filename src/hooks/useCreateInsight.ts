@@ -90,7 +90,7 @@ export function useCreateInsight() {
       // Await the activity so it's present the next time the detail panel opens.
       await createActivity({
         variables: {
-          objects: [{ insightId, userId, teamId, action: 'created', newValue: values.title }],
+          objects: [{ insightId, userId, teamId, action: 'created', fieldName: 'created', newValue: values.title }],
         },
       }).catch((err) => {
         console.error('[useCreateInsight] activity log failed:', err instanceof Error ? err.message : err);

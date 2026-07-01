@@ -1,4 +1,4 @@
-import { useMutation, useApolloClient } from '@apollo/client';
+import { useMutation, useApolloClient, ApolloClient } from '@apollo/client';
 import { useCallback } from 'react';
 import { UPDATE_INSIGHT_FIELDS } from '../graphql/mutations/insights';
 import { CREATE_INSIGHT_ACTIVITY } from '../graphql/mutations/activities';
@@ -11,6 +11,81 @@ import { STAGE_VALUES } from './useInsights';
 import { supabase } from '../services/supabase';
 import { sendBoardBroadcast } from './useRealtimeBoard';
 import Toast from 'react-native-toast-message';
+
+export type DetailNode = {
+  id: string;
+  title: string;
+  description: string;
+  stage: string;
+  priority: string;
+  drugName: string | null;
+  updatedAt: string;
+  hcp: { id: string; name: string; specialty: string; institution: string } | null;
+  category: { id: string; name: string } | null;
+};
+
+export interface ConflictField {
+  field: string;
+  mine: string;
+  theirs: string;
+}
+
+export class ConflictError extends Error {
+  constructor(
+    public readonly fields: ConflictField[],
+    public readonly serverNode: DetailNode,
+  ) {
+    super('Edit conflict: another user modified this insight');
+    this.name = 'ConflictError';
+  }
+}
+
+function findConflictingFields(
+  values: InsightFormValues,
+  node: DetailNode,
+  client: ApolloClient<object>,
+): ConflictField[] {
+  const cacheSnapshot = client.cache.extract() as Record<string, unknown>;
+  const hcpNameById = new Map(
+    Object.values(cacheSnapshot)
+      .filter((v): v is Record<string, unknown> =>
+        typeof v === 'object' && v !== null &&
+        (v as Record<string, unknown>).__typename === 'Hcps',
+      )
+      .map((v) => [v.id as string, v.name as string]),
+  );
+  const cachedCategories = client.readQuery<{
+    categoriesCollection: { edges: { node: { id: string; name: string } }[] };
+  }>({ query: LIST_CATEGORIES });
+  const categoryNameById = new Map(
+    cachedCategories?.categoriesCollection?.edges?.map((e) => [e.node.id, e.node.name]) ?? [],
+  );
+
+  const fields: ConflictField[] = [];
+  if (values.title !== node.title)
+    fields.push({ field: 'title', mine: values.title, theirs: node.title });
+  if (values.description !== node.description)
+    fields.push({ field: 'description', mine: values.description, theirs: node.description });
+  if (values.priority !== node.priority)
+    fields.push({ field: 'priority', mine: values.priority, theirs: node.priority });
+  if (STAGE_VALUES[values.stage] !== node.stage)
+    fields.push({ field: 'stage', mine: values.stage, theirs: node.stage.charAt(0).toUpperCase() + node.stage.slice(1) });
+  if ((values.drugName ?? null) !== (node.drugName ?? null))
+    fields.push({ field: 'drugName', mine: values.drugName ?? '—', theirs: node.drugName ?? '—' });
+  if ((values.hcpId ?? null) !== (node.hcp?.id ?? null))
+    fields.push({
+      field: 'hcp',
+      mine: values.hcpId ? (hcpNameById.get(values.hcpId) ?? values.hcpId) : '—',
+      theirs: node.hcp?.name ?? '—',
+    });
+  if ((values.categoryId ?? null) !== (node.category?.id ?? null))
+    fields.push({
+      field: 'category',
+      mine: values.categoryId ? (categoryNameById.get(values.categoryId) ?? values.categoryId) : '—',
+      theirs: node.category?.name ?? '—',
+    });
+  return fields;
+}
 
 const DIFFABLE_FIELDS: Array<{
   key: keyof InsightFormValues;
@@ -38,7 +113,7 @@ export function useUpdateInsight() {
   const [insertTags] = useMutation(INSERT_INSIGHT_TAGS);
 
   const update = useCallback(
-    async (original: Insight, values: InsightFormValues) => {
+    async (original: Insight, values: InsightFormValues, force = false) => {
       const { data: { session } } = await supabase.auth.getSession();
       const userId = session?.user?.id;
       const userName =
@@ -52,6 +127,20 @@ export function useUpdateInsight() {
       }
 
       try {
+        if (!force) {
+          const serverResult = await client.query<{
+            insightsCollection: { edges: { node: DetailNode }[] };
+          }>({
+            query: GET_INSIGHT_DETAIL,
+            variables: { id: original.id },
+            fetchPolicy: 'network-only',
+          });
+          const serverNode = serverResult.data?.insightsCollection?.edges?.[0]?.node;
+          if (serverNode && serverNode.updatedAt !== original.updatedAt) {
+            throw new ConflictError(findConflictingFields(values, serverNode, client), serverNode);
+          }
+        }
+
         await updateInsightFields({
           variables: {
             filter: { id: { eq: original.id } },
@@ -69,6 +158,7 @@ export function useUpdateInsight() {
           awaitRefetchQueries: false,
         });
       } catch (err) {
+        if (err instanceof ConflictError) throw err;
         const msg = err instanceof Error ? err.message : String(err);
         console.error('[useUpdateInsight]', msg);
         Toast.show({

@@ -1,8 +1,8 @@
-import { useMutation } from "@apollo/client";
+import { useMutation, useApolloClient } from "@apollo/client";
 import { useCallback } from "react";
 import { UPDATE_INSIGHT } from "../graphql/mutations/insights";
 import { CREATE_INSIGHT_ACTIVITY } from "../graphql/mutations/activities";
-import { LIST_INSIGHTS, GET_STAGE_COUNTS } from "../graphql/queries/insights";
+import { LIST_INSIGHTS, GET_STAGE_COUNTS, GET_INSIGHT_DETAIL } from "../graphql/queries/insights";
 import { Insight, InsightStage } from "../types";
 import { STAGE_VALUES, InsightsQueryFilter } from "./useInsights";
 import Toast from "react-native-toast-message";
@@ -35,6 +35,7 @@ type StageCountsData = {
 };
 
 export function useMoveInsight() {
+  const client = useApolloClient();
   const [updateInsight] = useMutation(UPDATE_INSIGHT);
   const [createActivity] = useMutation(CREATE_INSIGHT_ACTIVITY);
 
@@ -50,6 +51,28 @@ export function useMoveInsight() {
       sourceFilter: InsightsQueryFilter
     ) => {
       try {
+        // Check for swipe conflict: if another user already moved/edited this
+        // card since we loaded it, reject before the optimistic update fires.
+        const freshResult = await client.query<{
+          insightsCollection: { edges: { node: { updatedAt: string } }[] };
+        }>({
+          query: GET_INSIGHT_DETAIL,
+          variables: { id: insight.id },
+          fetchPolicy: 'network-only',
+        });
+        const freshUpdatedAt =
+          freshResult.data?.insightsCollection?.edges?.[0]?.node?.updatedAt;
+        if (freshUpdatedAt && freshUpdatedAt !== insight.updatedAt) {
+          Toast.show({
+            type: 'info',
+            text1: 'Card was already moved',
+            text2: 'Another user acted on this card first.',
+            position: 'bottom',
+            visibilityTime: 3000,
+          });
+          throw new Error('swipe_conflict');
+        }
+
         // Fetch session once — used for both broadcast and activity log.
         const { data: { session } } = await supabase.auth.getSession();
         const userId = session?.user?.id;
@@ -190,16 +213,18 @@ export function useMoveInsight() {
           visibilityTime: 2000,
         });
       } catch (err) {
-        Toast.show({
-          type: "error",
-          text1: "Failed to move insight",
-          text2: "Please try again",
-          position: "bottom",
-        });
+        if ((err as Error).message !== 'swipe_conflict') {
+          Toast.show({
+            type: "error",
+            text1: "Failed to move insight",
+            text2: "Please try again",
+            position: "bottom",
+          });
+        }
         throw err;
       }
     },
-    [updateInsight, createActivity]
+    [client, updateInsight, createActivity]
   );
 
   return { moveInsight, getNextStage, getPrevStage };

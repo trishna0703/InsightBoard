@@ -26,6 +26,8 @@ interface InsightDetailPanelProps {
   onMove: (targetStage: InsightStage) => void;
   /** Field names currently highlighted yellow (remote user just edited them). */
   highlightedFields?: string[];
+  /** Other users currently viewing this detail panel. */
+  viewers?: { userName: string }[];
 }
 
 function FieldRow({
@@ -51,6 +53,7 @@ export default function InsightDetailPanel({
   onEdit,
   onMove,
   highlightedFields = [],
+  viewers = [],
 }: InsightDetailPanelProps) {
   const hl = (field: string) => highlightedFields.includes(field);
   if (loading && !insight) {
@@ -77,6 +80,16 @@ export default function InsightDetailPanel({
       contentContainerStyle={styles.container}
       keyboardShouldPersistTaps="handled"
     >
+      {/* Viewing banner */}
+      {viewers.length > 0 && (
+        <View style={styles.viewerBanner}>
+          <Text style={styles.viewerBannerText}>
+            👁 {viewers.map((v) => v.userName).join(', ')}{' '}
+            {viewers.length === 1 ? 'is' : 'are'} also viewing
+          </Text>
+        </View>
+      )}
+
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
@@ -325,4 +338,15 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   bottomPad: { height: 40 },
+  viewerBanner: {
+    backgroundColor: Colors.primary[500] + '12',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    marginBottom: 4,
+  },
+  viewerBannerText: {
+    fontSize: 12,
+    color: Colors.primary[700],
+    fontWeight: '500',
+  },
 });

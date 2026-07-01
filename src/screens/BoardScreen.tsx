@@ -1,4 +1,10 @@
-import React, { useState, useCallback, useRef, useLayoutEffect, useEffect } from "react";
+import React, {
+  useState,
+  useCallback,
+  useRef,
+  useLayoutEffect,
+  useEffect,
+} from "react";
 import {
   View,
   StyleSheet,
@@ -13,7 +19,7 @@ import { useInsights } from "../hooks/useInsights";
 import { useMoveInsight } from "../hooks/useMoveInsight";
 import { useInsightDetail } from "../hooks/useInsightDetail";
 import { useCreateInsight } from "../hooks/useCreateInsight";
-import { useUpdateInsight } from "../hooks/useUpdateInsight";
+import { useUpdateInsight, ConflictError, ConflictField, DetailNode } from "../hooks/useUpdateInsight";
 import { useDebounce } from "../hooks/useDebounce";
 import PipelineBar from "../components/board/PipelineBar";
 import InsightCardList from "../components/board/InsightCardList";
@@ -21,6 +27,7 @@ import FilterBar from "../components/board/FilterBar";
 import DetailSheet from "../components/common/DetailSheet";
 import InsightDetailPanel from "../components/detail/InsightDetailPanel";
 import InsightForm from "../components/forms/InsightForm";
+import ConflictModal from "../components/forms/ConflictModal";
 import { InsightFormValues } from "../schemas/insightForm";
 import { Colors } from "../constants/colors";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
@@ -28,6 +35,9 @@ import { useRealtimeBoard } from "@/hooks/useRealtimeBoard";
 import { usePresence } from "@/hooks/usePresence";
 import { useNavigation } from "@react-navigation/native";
 import OnlineAvatars from "@/components/common/OnlineAvatars";
+import { useBroadcast } from "../hooks/useBroadcast";
+import { useActivityFeed } from "../hooks/useActivityFeed";
+import ActivityFeedSheet from "../components/board/ActivityFeedSheet";
 
 const STAGES: InsightStage[] = [
   "Observation",
@@ -57,24 +67,66 @@ export default function BoardScreen() {
   const [highlightedFields, setHighlightedFields] = useState<string[]>([]);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Card highlighted in the list after tapping an activity feed entry
+  const [highlightedCardId, setHighlightedCardId] = useState<string | null>(null);
+  const cardHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Pending conflict resolution — set when useUpdateInsight throws ConflictError
+  const [conflictState, setConflictState] = useState<{
+    fields: ConflictField[];
+    serverNode: DetailNode;
+    pendingValues: InsightFormValues;
+  } | null>(null);
+
   // Track the form's dirty state without causing re-renders
   const formIsDirtyRef = useRef(false);
   // Set to true when Edit is tapped — consumed by the detail sheet's onClosed
   // callback so the form only opens after the detail modal is fully unmounted.
   const pendingEditRef = useRef(false);
 
+  const { state: broadcastState, emit: emitSignal } = useBroadcast(currentUser);
+  const {
+    activities,
+    unreadCount,
+    loading: feedLoading,
+    markRead,
+    markClosed,
+  } = useActivityFeed(currentUser?.id ?? null);
+  const [feedVisible, setFeedVisible] = useState(false);
+
+  // When user taps an activity entry — navigate to that stage and highlight the card
+  const handleTapActivity = useCallback((insightId: string, stage: string) => {
+    const stageDisplay = (stage.charAt(0).toUpperCase() +
+      stage.slice(1)) as InsightStage;
+    setSelectedStage(stageDisplay);
+    setFeedVisible(false);
+    // Small delay so the list re-renders with the new stage before the highlight fires
+    setTimeout(() => {
+      setHighlightedCardId(insightId);
+      if (cardHighlightTimerRef.current) clearTimeout(cardHighlightTimerRef.current);
+      cardHighlightTimerRef.current = setTimeout(() => setHighlightedCardId(null), 2000);
+    }, 300);
+  }, []);
+
   const debouncedSearch = useDebounce(search, 300);
 
   const handleDetailChanged = useCallback((fields: string[]) => {
     if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
     setHighlightedFields(fields);
-    highlightTimerRef.current = setTimeout(() => setHighlightedFields([]), 1500);
+    highlightTimerRef.current = setTimeout(
+      () => setHighlightedFields([]),
+      1500,
+    );
   }, []);
 
-  // Clear the timer on unmount
-  useEffect(() => () => {
-    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
-  }, []);
+  // Clear timers on unmount
+  useEffect(
+    () => () => {
+      if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+      if (cardHighlightTimerRef.current) clearTimeout(cardHighlightTimerRef.current);
+    },
+    [],
+  );
 
   useRealtimeBoard(
     currentUser?.id ?? null,
@@ -115,7 +167,8 @@ export default function BoardScreen() {
   const handlePressCard = useCallback((insight: Insight) => {
     setDetailInsightId(insight.id);
     setShowDetail(true);
-  }, []);
+    emitSignal("viewing", insight.id, "start");
+  }, [emitSignal]);
 
   const handleLongPress = useCallback(
     (insight: Insight) => {
@@ -158,10 +211,11 @@ export default function BoardScreen() {
 
   const handleOpenEdit = useCallback(() => {
     if (!detailInsight) return;
+    emitSignal("editing", detailInsight.id, "start");
     setEditingInsight(detailInsight);
     pendingEditRef.current = true;
     setShowDetail(false);
-  }, [detailInsight]);
+  }, [detailInsight, emitSignal]);
 
   const handleOpenCreate = useCallback(() => {
     setEditingInsight(null);
@@ -170,9 +224,11 @@ export default function BoardScreen() {
   }, []);
 
   const closeForm = useCallback(() => {
+    if (editingInsight) emitSignal("editing", editingInsight.id, "stop");
     setShowForm(false);
+    setConflictState(null);
     formIsDirtyRef.current = false;
-  }, []);
+  }, [editingInsight, emitSignal]);
 
   const handleDirtyChange = useCallback((dirty: boolean) => {
     formIsDirtyRef.current = dirty;
@@ -210,13 +266,81 @@ export default function BoardScreen() {
         }
         closeForm();
         refetch();
-      } catch {
-        // Error toast already shown inside the hook — just keep the form open
+      } catch (err) {
+        if (err instanceof ConflictError) {
+          setConflictState({
+            fields: err.fields,
+            serverNode: err.serverNode,
+            pendingValues: values,
+          });
+        }
+        // Non-conflict error toast already shown inside the hook
       } finally {
         setSubmitting(false);
       }
     },
     [editingInsight, update, create, refetch, refetchDetail, closeForm],
+  );
+
+  const handleKeepMine = useCallback(async () => {
+    if (!conflictState || !editingInsight) return;
+    setSubmitting(true);
+    try {
+      await update(editingInsight, conflictState.pendingValues, true);
+      refetchDetail();
+      setConflictState(null);
+      closeForm();
+      refetch();
+    } catch {
+      // toast shown in hook
+    } finally {
+      setSubmitting(false);
+    }
+  }, [conflictState, editingInsight, update, refetchDetail, closeForm, refetch]);
+
+  const handleKeepTheirs = useCallback(() => {
+    setConflictState(null);
+    closeForm();
+    refetchDetail();
+  }, [closeForm, refetchDetail]);
+
+  const handleMerge = useCallback(
+    async (choices: Record<string, "mine" | "theirs">) => {
+      if (!conflictState || !editingInsight) return;
+      const { pendingValues, serverNode } = conflictState;
+      const merged: InsightFormValues = {
+        ...pendingValues,
+        title: choices["title"] === "theirs" ? serverNode.title : pendingValues.title,
+        description: choices["description"] === "theirs" ? serverNode.description : pendingValues.description,
+        stage: choices["stage"] === "theirs" ? (serverNode.stage as InsightFormValues["stage"]) : pendingValues.stage,
+        priority: choices["priority"] === "theirs" ? (serverNode.priority as InsightFormValues["priority"]) : pendingValues.priority,
+        drugName: choices["drugName"] === "theirs" ? serverNode.drugName : pendingValues.drugName,
+      };
+      setSubmitting(true);
+      try {
+        await update(editingInsight, merged, true);
+        refetchDetail();
+        setConflictState(null);
+        closeForm();
+        refetch();
+      } catch {
+        // toast shown in hook
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [conflictState, editingInsight, update, refetchDetail, closeForm, refetch],
+  );
+
+  const handleEditAnyway = useCallback(
+    (insight: Insight) => {
+      setDetailInsightId(insight.id);
+      setEditingInsight(insight);
+      emitSignal("editing", insight.id, "start");
+      pendingEditRef.current = false;
+      setShowForm(true);
+    },
+    [emitSignal],
   );
 
   const formInitialValues: Partial<InsightFormValues> | undefined =
@@ -269,8 +393,40 @@ export default function BoardScreen() {
         onPressCard={handlePressCard}
         onLongPressCard={handleLongPress}
         onEndReached={loadMore}
+        broadcastState={broadcastState}
+        onEmitSignal={emitSignal}
+        onEditAnyway={handleEditAnyway}
+        highlightedCardId={highlightedCardId}
       />
 
+      {/* Floating activity bell */}
+      <TouchableOpacity
+        style={styles.bellButton}
+        onPress={() => {
+          markRead();
+          setFeedVisible(true);
+        }}
+        accessibilityLabel={`Activity feed, ${unreadCount} unread`}
+      >
+        <Text style={styles.bellIcon}>🔔</Text>
+        {unreadCount > 0 && (
+          <View style={styles.unreadBadge}>
+            <Text style={styles.unreadText}>{unreadCount}</Text>
+          </View>
+        )}
+      </TouchableOpacity>
+
+      {/* Activity feed sheet */}
+      <ActivityFeedSheet
+        visible={feedVisible}
+        onClose={() => {
+          markClosed();
+          setFeedVisible(false);
+        }}
+        activities={activities}
+        loading={feedLoading}
+        onTapEntry={handleTapActivity}
+      />
       {/* FAB — create new insight */}
       <TouchableOpacity
         style={styles.fab}
@@ -284,7 +440,10 @@ export default function BoardScreen() {
       {/* Detail sheet — no guard needed, read-only view */}
       <DetailSheet
         visible={showDetail}
-        onClose={() => setShowDetail(false)}
+        onClose={() => {
+          if (detailInsightId) emitSignal("viewing", detailInsightId, "stop");
+          setShowDetail(false);
+        }}
         onClosed={() => {
           if (pendingEditRef.current) {
             pendingEditRef.current = false;
@@ -298,6 +457,7 @@ export default function BoardScreen() {
           onEdit={handleOpenEdit}
           onMove={handleDetailMove}
           highlightedFields={highlightedFields}
+          viewers={detailInsightId ? (broadcastState.viewing[detailInsightId] ?? []) : []}
         />
       </DetailSheet>
 
@@ -317,6 +477,16 @@ export default function BoardScreen() {
           onDirtyChange={handleDirtyChange}
         />
       </DetailSheet>
+
+      {/* Conflict resolution modal */}
+      <ConflictModal
+        visible={conflictState !== null}
+        fields={conflictState?.fields ?? []}
+        onKeepMine={handleKeepMine}
+        onKeepTheirs={handleKeepTheirs}
+        onMerge={handleMerge}
+        onDismiss={() => setConflictState(null)}
+      />
     </View>
   );
 }
@@ -344,5 +514,39 @@ const styles = StyleSheet.create({
     fontSize: 28,
     lineHeight: 34,
     fontWeight: "300",
+  },
+  bellButton: {
+    position: "absolute",
+    bottom: 24,
+    right: 20,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: Colors.primary[500],
+    alignItems: "center",
+    justifyContent: "center",
+    elevation: 6,
+    shadowColor: Colors.black,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+  },
+  bellIcon: { fontSize: 22 },
+  unreadBadge: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    backgroundColor: Colors.system.error,
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 4,
+  },
+  unreadText: {
+    color: Colors.white,
+    fontSize: 10,
+    fontWeight: "700",
   },
 });

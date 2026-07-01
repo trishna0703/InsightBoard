@@ -5,6 +5,7 @@ import { Insight, InsightStage } from "../../types";
 import SwipeableInsightCard from "./SwipeableInsightCard";
 import { Colors } from "../../constants/colors";
 import { InsightsQueryFilter } from "../../hooks/useInsights";
+import { BroadcastState } from "@/hooks/useBroadcast";
 
 interface InsightCardListProps {
   insights: Insight[];
@@ -15,6 +16,14 @@ interface InsightCardListProps {
   onPressCard: (insight: Insight) => void;
   onLongPressCard: (insight: Insight) => void;
   onEndReached: () => void;
+  broadcastState?: BroadcastState;
+  onEmitSignal?: (
+    type: "swiping",
+    insightId: string,
+    action: "start" | "stop",
+  ) => void;
+  onEditAnyway?: (insight: Insight) => void;
+  highlightedCardId?: string | null;
 }
 
 function EmptyState({ stage }: { stage: InsightStage }) {
@@ -36,6 +45,10 @@ export default function InsightCardList({
   onPressCard,
   onLongPressCard,
   onEndReached,
+  broadcastState,
+  onEmitSignal,
+  onEditAnyway,
+  highlightedCardId,
 }: InsightCardListProps) {
   const [scrollLocked, setScrollLocked] = useState(false);
 
@@ -47,11 +60,12 @@ export default function InsightCardList({
       renderItem={({ item }) => (
         <SwipeableInsightCard
           insight={item}
-          filter={filter}
           onPress={onPressCard}
           onLongPress={onLongPressCard}
           onDragStart={() => setScrollLocked(true)}
           onDragEnd={() => setScrollLocked(false)}
+          highlighted={item.id === highlightedCardId}
+          {...{ filter, broadcastState, onEmitSignal, onEditAnyway }}
         />
       )}
       ListEmptyComponent={!loading ? <EmptyState stage={stage} /> : null}
