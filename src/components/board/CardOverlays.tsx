@@ -85,7 +85,7 @@ export default function CardOverlays({
         >
           <Text style={styles.lockIcon}>🔒</Text>
           <Text style={styles.lockText} numberOfLines={1}>
-            {editors[0].userName}
+            {editors[0].userName} is editing…
           </Text>
         </TouchableOpacity>
       )}
@@ -118,8 +118,8 @@ const styles = StyleSheet.create({
   } as object,
   lockBadge: {
     position: "absolute",
-    top: 12,
-    right: 18,
+    bottom: 10,
+    right: 14,
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: Colors.system.warning,
@@ -134,12 +134,12 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: Colors.white,
     fontWeight: "700",
-    maxWidth: 80,
+    maxWidth: 120,
   },
   viewerBadge: {
     position: "absolute",
-    top: 12,
-    right: 18,
+    bottom: 10,
+    right: 14,
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: Colors.primary[500],
@@ -154,6 +154,6 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: Colors.white,
     fontWeight: "700",
-    maxWidth: 80,
+    maxWidth: 100,
   },
 });

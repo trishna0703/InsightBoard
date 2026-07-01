@@ -58,6 +58,9 @@ export function useRealtimeBoard(
   /** Fires when a remote user edits the currently-open detail insight.
    *  Receives the list of changed field names for yellow-flash highlighting. */
   onDetailChanged?: (changedFields: string[]) => void,
+  /** Fires on any broadcast from another user (created/moved/updated).
+   *  Use this to trigger side-effects like refreshing the activity feed. */
+  onRemoteBroadcast?: () => void,
 ): void {
   const client = useApolloClient();
 
@@ -65,9 +68,11 @@ export function useRealtimeBoard(
   // without needing to be recreated on every render.
   const openDetailIdRef = useRef(openDetailId);
   const onDetailChangedRef = useRef(onDetailChanged);
+  const onRemoteBroadcastRef = useRef(onRemoteBroadcast);
 
   useEffect(() => { openDetailIdRef.current = openDetailId; }, [openDetailId]);
   useEffect(() => { onDetailChangedRef.current = onDetailChanged; }, [onDetailChanged]);
+  useEffect(() => { onRemoteBroadcastRef.current = onRemoteBroadcast; }, [onRemoteBroadcast]);
 
   useEffect(() => {
     if (!currentUserId) return;
@@ -161,7 +166,11 @@ export function useRealtimeBoard(
 
         client.refetchQueries({ include: ['GetStageCounts'] });
       } else if (newStage) {
-        // Non-stage edit: update the node in the current stage list
+        // Non-stage edit: patch only scalar fields in the cached node.
+        // Preserve existing relation objects (hcp, category, insightTagsCollection)
+        // because the Postgres row doesn't carry join data. Only null out a relation
+        // when its FK actually changed; the concurrent GetInsightDetail refetch will
+        // fill in the correct joined value.
         const filter = { stage: { eq: newRow.stage } };
         try {
           const data = client.readQuery<{
@@ -174,9 +183,27 @@ export function useRealtimeBoard(
               data: {
                 insightsCollection: {
                   ...data.insightsCollection,
-                  edges: data.insightsCollection.edges.map((e) =>
-                    e.node.id === newRow.id ? { ...e, node: rowToNode(newRow) } : e,
-                  ),
+                  edges: data.insightsCollection.edges.map((e) => {
+                    if (e.node.id !== newRow.id) return e;
+                    const existingHcpId = (e.node.hcp as { id?: string } | null)?.id ?? null;
+                    const existingCatId = (e.node.category as { id?: string } | null)?.id ?? null;
+                    return {
+                      ...e,
+                      node: {
+                        ...e.node,
+                        title: newRow.title,
+                        description: newRow.description,
+                        stage: newRow.stage,
+                        priority: newRow.priority,
+                        columnOrder: newRow.column_order,
+                        drugName: newRow.drug_name,
+                        updatedAt: newRow.updated_at,
+                        hcp: newRow.hcp_id !== existingHcpId ? null : e.node.hcp,
+                        category: newRow.category_id !== existingCatId ? null : e.node.category,
+                        insightTagsCollection: e.node.insightTagsCollection,
+                      },
+                    };
+                  }),
                 },
               },
             });
@@ -202,6 +229,8 @@ export function useRealtimeBoard(
     // ── Broadcast handler: toasts + fade animation markers ───────────────────
 
     function handleBroadcast(payload: BoardBroadcastPayload) {
+      // Notify listeners (e.g. activity feed) that a remote user acted.
+      onRemoteBroadcastRef.current?.();
       // currentUserId is captured from the outer effect scope — stable for the
       // effect's lifetime. If the user changes, the effect re-runs with a new closure.
       switch (payload.action) {

@@ -6,6 +6,7 @@ import {
   Dimensions,
   Animated,
   PanResponder,
+  Alert,
 } from "react-native";
 import { Insight } from "../../types";
 import { Colors } from "../../constants/colors";
@@ -65,6 +66,25 @@ export default function SwipeableInsightCard({
   const viewers = broadcastState?.viewing[insight.id] ?? [];
   const editors = broadcastState?.editing[insight.id] ?? [];
   const isSwiping = broadcastState?.swiping.has(insight.id) ?? false;
+
+  const handleCardPress = useCallback(() => {
+    if (editors.length > 0) {
+      Alert.alert(
+        `${editors[0].userName} is editing…`,
+        "What would you like to do?",
+        [
+          { text: "View Only", style: "cancel", onPress: () => onPress(insight) },
+          {
+            text: "Edit Anyway",
+            style: "destructive",
+            onPress: () => onEditAnyway?.(insight),
+          },
+        ],
+      );
+      return;
+    }
+    onPress(insight);
+  }, [editors, insight, onPress, onEditAnyway]);
 
   const stateRef = useRef({
     insight,
@@ -290,7 +310,7 @@ export default function SwipeableInsightCard({
       >
         <InsightCard
           insight={insight}
-          onPress={onPress}
+          onPress={handleCardPress}
           onLongPress={onLongPress}
           highlighted={highlighted}
         />

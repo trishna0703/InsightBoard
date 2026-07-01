@@ -14,6 +14,34 @@ export const STAGE_VALUES: Record<InsightStage, string> = {
 export interface FilterInput {
   search: string;
   priorities: Priority[];
+  categoryId: string | null;
+  hcpId: string | null;
+  hcpName: string | null; // denormalized for chip label
+  tagIds: string[];
+  dateFrom: string | null; // "YYYY-MM-DD"
+  dateTo: string | null;
+}
+
+export const DEFAULT_FILTER: FilterInput = {
+  search: '',
+  priorities: [],
+  categoryId: null,
+  hcpId: null,
+  hcpName: null,
+  tagIds: [],
+  dateFrom: null,
+  dateTo: null,
+};
+
+export function countActiveFilters(f: FilterInput): number {
+  let n = 0;
+  if (f.search.trim()) n++;
+  if (f.priorities.length > 0) n++;
+  if (f.categoryId) n++;
+  if (f.hcpId) n++;
+  if (f.tagIds.length > 0) n++;
+  if (f.dateFrom || f.dateTo) n++;
+  return n;
 }
 
 // The exact shape of the GraphQL `filter` argument we send to LIST_INSIGHTS.
@@ -25,6 +53,9 @@ export interface InsightsQueryFilter {
   stage: { eq: string };
   priority?: { in: Priority[] };
   title?: { ilike: string };
+  categoryId?: { eq: string };
+  hcpId?: { eq: string };
+  createdAt?: { gte?: string; lte?: string };
 }
 
 export function buildInsightsFilter(
@@ -35,12 +66,15 @@ export function buildInsightsFilter(
     stage: { eq: STAGE_VALUES[stage] },
   };
 
-  if (filters.priorities.length > 0) {
-    f.priority = { in: filters.priorities };
-  }
+  if (filters.priorities.length > 0) f.priority = { in: filters.priorities };
+  if (filters.search.trim()) f.title = { ilike: `%${filters.search.trim()}%` };
+  if (filters.categoryId) f.categoryId = { eq: filters.categoryId };
+  if (filters.hcpId) f.hcpId = { eq: filters.hcpId };
 
-  if (filters.search.trim().length > 0) {
-    f.title = { ilike: `%${filters.search.trim()}%` };
+  if (filters.dateFrom || filters.dateTo) {
+    f.createdAt = {};
+    if (filters.dateFrom) f.createdAt.gte = `${filters.dateFrom}T00:00:00Z`;
+    if (filters.dateTo) f.createdAt.lte = `${filters.dateTo}T23:59:59Z`;
   }
 
   return f;
@@ -119,12 +153,18 @@ export function useInsights(
   }>(GET_STAGE_COUNTS);
 
   const insights: Insight[] = useMemo(() => {
-    return (
+    const raw =
       data?.insightsCollection?.edges?.map(
         (e: { node: Record<string, unknown> }) => transformInsight(e.node)
-      ) ?? []
+      ) ?? [];
+    // Tag filtering is AND-logic and done client-side because pg_graphql
+    // nested-collection filters on insight_tags would require complex
+    // repeated `and` clauses; the server already returns tags per card.
+    if (filters.tagIds.length === 0) return raw;
+    return raw.filter((i) =>
+      filters.tagIds.every((tid) => i.tags.some((t) => t.id === tid)),
     );
-  }, [data]);
+  }, [data, filters.tagIds]);
 
   const counts: Record<InsightStage, number> = useMemo(() => {
     return {

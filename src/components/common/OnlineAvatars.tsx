@@ -6,7 +6,7 @@ import {
   StyleSheet,
   Modal,
   FlatList,
-  SafeAreaView,
+  Platform,
 } from "react-native";
 import { OnlineUser } from "../../hooks/usePresence";
 import { Colors } from "../../constants/colors";
@@ -106,7 +106,7 @@ export default function OnlineAvatars({
           onPress={() => setShowAll(false)}
           activeOpacity={1}
         >
-          <SafeAreaView style={styles.sheet}>
+          <View style={styles.sheet}>
             <Text style={styles.sheetTitle}>Online Now</Text>
             <FlatList
               data={others}
@@ -121,8 +121,9 @@ export default function OnlineAvatars({
                   <View style={styles.onlineDot} />
                 </View>
               )}
+              contentContainerStyle={styles.listContent}
             />
-          </SafeAreaView>
+          </View>
         </TouchableOpacity>
       </Modal>
     </>
@@ -169,8 +170,12 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.white,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    padding: 20,
+    paddingTop: 20,
+    paddingHorizontal: 20,
     maxHeight: "60%",
+  },
+  listContent: {
+    paddingBottom: Platform.OS === "ios" ? 34 : 20,
   },
   sheetTitle: {
     fontSize: 18,

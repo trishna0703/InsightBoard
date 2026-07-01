@@ -140,6 +140,43 @@ export const GET_STAGE_COUNTS = gql`
   }
 `;
 
+export const GET_KANBAN_OVERVIEW = gql`
+  query GetKanbanOverview {
+    observation: insightsCollection(
+      filter: { stage: { eq: "observation" } }
+      first: 4
+      orderBy: [{ columnOrder: AscNullsLast }]
+    ) {
+      totalCount
+      edges { node { id title priority } }
+    }
+    insight: insightsCollection(
+      filter: { stage: { eq: "insight" } }
+      first: 4
+      orderBy: [{ columnOrder: AscNullsLast }]
+    ) {
+      totalCount
+      edges { node { id title priority } }
+    }
+    actionable: insightsCollection(
+      filter: { stage: { eq: "actionable" } }
+      first: 4
+      orderBy: [{ columnOrder: AscNullsLast }]
+    ) {
+      totalCount
+      edges { node { id title priority } }
+    }
+    impact: insightsCollection(
+      filter: { stage: { eq: "impact" } }
+      first: 4
+      orderBy: [{ columnOrder: AscNullsLast }]
+    ) {
+      totalCount
+      edges { node { id title priority } }
+    }
+  }
+`;
+
 export const GET_USER_NAME = gql`
   query GetUserName($id: UUID!) {
     usersCollection(filter: { id: { eq: $id } }) {

@@ -1,6 +1,9 @@
 import { useEffect, useRef, useCallback } from "react";
 import { useImmer } from "use-immer";
+import { enableMapSet } from "immer";
 import { supabase } from "../services/supabase";
+
+enableMapSet();
 
 const TEAM_ID = process.env.EXPO_PUBLIC_TEAM_ID!;
 

@@ -4,26 +4,31 @@ import React, {
   useRef,
   useLayoutEffect,
   useEffect,
+  useMemo,
 } from "react";
-import {
-  View,
-  StyleSheet,
-  TouchableOpacity,
-  Text,
-  ActionSheetIOS,
-  Platform,
-  Alert,
-} from "react-native";
-import { InsightStage, Priority, Insight } from "../types";
-import { useInsights } from "../hooks/useInsights";
+import { View, StyleSheet, TouchableOpacity, Text, Alert } from "react-native";
+import { useQuery } from "@apollo/client";
+import { InsightStage, Insight } from "../types";
+import { LIST_CATEGORIES, LIST_TAGS } from "../graphql/queries/tags";
+import { useInsights, FilterInput, DEFAULT_FILTER, countActiveFilters } from "../hooks/useInsights";
 import { useMoveInsight } from "../hooks/useMoveInsight";
 import { useInsightDetail } from "../hooks/useInsightDetail";
 import { useCreateInsight } from "../hooks/useCreateInsight";
-import { useUpdateInsight, ConflictError, ConflictField, DetailNode } from "../hooks/useUpdateInsight";
+import {
+  useUpdateInsight,
+  ConflictError,
+  ConflictField,
+  DetailNode,
+} from "../hooks/useUpdateInsight";
 import { useDebounce } from "../hooks/useDebounce";
 import PipelineBar from "../components/board/PipelineBar";
 import InsightCardList from "../components/board/InsightCardList";
+import KanbanOverview from "../components/board/KanbanOverview";
+import DraggableInsightList from "../components/board/DraggableInsightList";
 import FilterBar from "../components/board/FilterBar";
+import FilterSheet from "../components/board/FilterSheet";
+import { useKanbanData } from "../hooks/useKanbanData";
+import { useReorderInsights } from "../hooks/useReorderInsights";
 import DetailSheet from "../components/common/DetailSheet";
 import InsightDetailPanel from "../components/detail/InsightDetailPanel";
 import InsightForm from "../components/forms/InsightForm";
@@ -39,20 +44,15 @@ import { useBroadcast } from "../hooks/useBroadcast";
 import { useActivityFeed } from "../hooks/useActivityFeed";
 import ActivityFeedSheet from "../components/board/ActivityFeedSheet";
 
-const STAGES: InsightStage[] = [
-  "Observation",
-  "Insight",
-  "Actionable",
-  "Impact",
-];
-
 export default function BoardScreen() {
   const currentUser = useCurrentUser();
 
+  const [viewMode, setViewMode] = useState<"list" | "kanban">("list");
+  const [reorderMode, setReorderMode] = useState(false);
   const [selectedStage, setSelectedStage] =
     useState<InsightStage>("Observation");
-  const [search, setSearch] = useState("");
-  const [selectedPriorities, setSelectedPriorities] = useState<Priority[]>([]);
+  const [filters, setFilters] = useState<FilterInput>(DEFAULT_FILTER);
+  const [showFilterSheet, setShowFilterSheet] = useState(false);
 
   // Detail sheet state
   const [detailInsightId, setDetailInsightId] = useState<string | null>(null);
@@ -68,8 +68,12 @@ export default function BoardScreen() {
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Card highlighted in the list after tapping an activity feed entry
-  const [highlightedCardId, setHighlightedCardId] = useState<string | null>(null);
-  const cardHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [highlightedCardId, setHighlightedCardId] = useState<string | null>(
+    null,
+  );
+  const cardHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   // Pending conflict resolution — set when useUpdateInsight throws ConflictError
   const [conflictState, setConflictState] = useState<{
@@ -83,6 +87,15 @@ export default function BoardScreen() {
   // Set to true when Edit is tapped — consumed by the detail sheet's onClosed
   // callback so the form only opens after the detail modal is fully unmounted.
   const pendingEditRef = useRef(false);
+  // When a ConflictError is caught, we close the form sheet and park the
+  // conflict data here. The form's onClosed callback picks it up and calls
+  // setConflictState — this avoids showing a Modal on top of another Modal,
+  // which is unsupported on iOS.
+  const pendingConflictRef = useRef<{
+    fields: ConflictField[];
+    serverNode: DetailNode;
+    pendingValues: InsightFormValues;
+  } | null>(null);
 
   const { state: broadcastState, emit: emitSignal } = useBroadcast(currentUser);
   const {
@@ -91,6 +104,7 @@ export default function BoardScreen() {
     loading: feedLoading,
     markRead,
     markClosed,
+    refetch: refetchActivities,
   } = useActivityFeed(currentUser?.id ?? null);
   const [feedVisible, setFeedVisible] = useState(false);
 
@@ -103,12 +117,76 @@ export default function BoardScreen() {
     // Small delay so the list re-renders with the new stage before the highlight fires
     setTimeout(() => {
       setHighlightedCardId(insightId);
-      if (cardHighlightTimerRef.current) clearTimeout(cardHighlightTimerRef.current);
-      cardHighlightTimerRef.current = setTimeout(() => setHighlightedCardId(null), 2000);
+      if (cardHighlightTimerRef.current)
+        clearTimeout(cardHighlightTimerRef.current);
+      cardHighlightTimerRef.current = setTimeout(
+        () => setHighlightedCardId(null),
+        2000,
+      );
     }, 300);
   }, []);
 
-  const debouncedSearch = useDebounce(search, 300);
+  const debouncedSearch = useDebounce(filters.search, 300);
+
+  // Lookup maps for active-chip labels (both queries are cache-first — no extra network cost).
+  const { data: categoryData } = useQuery<{
+    categoriesCollection: { edges: { node: { id: string; name: string } }[] };
+  }>(LIST_CATEGORIES, { fetchPolicy: "cache-first" });
+  const { data: tagData } = useQuery<{
+    tagsCollection: { edges: { node: { id: string; name: string } }[] };
+  }>(LIST_TAGS, { fetchPolicy: "cache-first" });
+
+  const categoryNameById = useMemo(
+    () =>
+      new Map(
+        categoryData?.categoriesCollection?.edges?.map((e) => [e.node.id, e.node.name]) ?? [],
+      ),
+    [categoryData],
+  );
+  const tagNameById = useMemo(
+    () =>
+      new Map(
+        tagData?.tagsCollection?.edges?.map((e) => [e.node.id, e.node.name]) ?? [],
+      ),
+    [tagData],
+  );
+
+  const activeChips = useMemo(() => {
+    const chips: { key: string; label: string; onRemove: () => void }[] = [];
+    if (filters.priorities.length > 0)
+      chips.push({
+        key: "priorities",
+        label: filters.priorities.join(", "),
+        onRemove: () => setFilters((f) => ({ ...f, priorities: [] })),
+      });
+    if (filters.categoryId)
+      chips.push({
+        key: "category",
+        label: categoryNameById.get(filters.categoryId) ?? "Category",
+        onRemove: () => setFilters((f) => ({ ...f, categoryId: null })),
+      });
+    if (filters.hcpId)
+      chips.push({
+        key: "hcp",
+        label: filters.hcpName ?? "HCP",
+        onRemove: () => setFilters((f) => ({ ...f, hcpId: null, hcpName: null })),
+      });
+    filters.tagIds.forEach((tid) =>
+      chips.push({
+        key: `tag-${tid}`,
+        label: tagNameById.get(tid) ?? tid,
+        onRemove: () =>
+          setFilters((f) => ({ ...f, tagIds: f.tagIds.filter((x) => x !== tid) })),
+      }),
+    );
+    if (filters.dateFrom || filters.dateTo)
+      chips.push({
+        key: "date",
+        label: [filters.dateFrom, filters.dateTo].filter(Boolean).join(" → "),
+        onRemove: () => setFilters((f) => ({ ...f, dateFrom: null, dateTo: null })),
+      });
+    return chips;
+  }, [filters, categoryNameById, tagNameById]);
 
   const handleDetailChanged = useCallback((fields: string[]) => {
     if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
@@ -123,7 +201,8 @@ export default function BoardScreen() {
   useEffect(
     () => () => {
       if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
-      if (cardHighlightTimerRef.current) clearTimeout(cardHighlightTimerRef.current);
+      if (cardHighlightTimerRef.current)
+        clearTimeout(cardHighlightTimerRef.current);
     },
     [],
   );
@@ -132,13 +211,14 @@ export default function BoardScreen() {
     currentUser?.id ?? null,
     showDetail ? detailInsightId : null,
     handleDetailChanged,
+    refetchActivities,
   );
 
   const { onlineUsers } = usePresence(currentUser);
 
   const { insights, counts, filter, loading, refetch, loadMore } = useInsights(
     selectedStage,
-    { search: debouncedSearch, priorities: selectedPriorities },
+    { ...filters, search: debouncedSearch },
   );
 
   const {
@@ -147,57 +227,40 @@ export default function BoardScreen() {
     refetch: refetchDetail,
   } = useInsightDetail(detailInsightId);
 
+  const {
+    stages: kanbanStages,
+    loading: kanbanLoading,
+    refetch: refetchKanban,
+  } = useKanbanData();
+  const { reorderInsight } = useReorderInsights();
+
+  const handleSelectKanbanStage = useCallback((stage: InsightStage) => {
+    setSelectedStage(stage);
+    setViewMode("list");
+  }, []);
+
   const { moveInsight } = useMoveInsight();
   const { create } = useCreateInsight();
   const { update } = useUpdateInsight();
 
-  const handleTogglePriority = useCallback((priority: Priority) => {
-    setSelectedPriorities((prev) =>
-      prev.includes(priority)
-        ? prev.filter((p) => p !== priority)
-        : [...prev, priority],
-    );
-  }, []);
-
-  const handleClearAll = useCallback(() => {
-    setSearch("");
-    setSelectedPriorities([]);
-  }, []);
-
-  const handlePressCard = useCallback((insight: Insight) => {
-    setDetailInsightId(insight.id);
-    setShowDetail(true);
-    emitSignal("viewing", insight.id, "start");
-  }, [emitSignal]);
-
-  const handleLongPress = useCallback(
+  const handlePressCard = useCallback(
     (insight: Insight) => {
-      const options = STAGES.filter((s) => s !== insight.stage);
-      const doMove = (stage: InsightStage) =>
-        moveInsight(insight, stage, filter).catch(() => null);
-
-      if (Platform.OS === "ios") {
-        ActionSheetIOS.showActionSheetWithOptions(
-          {
-            title: `Move "${insight.title}" to…`,
-            options: [...options, "Cancel"],
-            cancelButtonIndex: options.length,
-          },
-          (index) => {
-            if (index < options.length) doMove(options[index]);
-          },
-        );
-      } else {
-        Alert.alert("Move to…", undefined, [
-          ...options.map((s) => ({
-            text: s,
-            onPress: () => doMove(s),
-          })),
-          { text: "Cancel", style: "cancel" as const },
-        ]);
-      }
+      setDetailInsightId(insight.id);
+      setShowDetail(true);
+      emitSignal("viewing", insight.id, "start");
     },
-    [moveInsight, filter],
+    [emitSignal],
+  );
+
+  const handleLongPress = useCallback((_insight: Insight) => {
+    setReorderMode(true);
+  }, []);
+
+  const handleReorderDone = useCallback(
+    (moved: Insight, newOrder: Insight[]) => {
+      reorderInsight(moved, newOrder, filter);
+    },
+    [reorderInsight, filter],
   );
 
   const handleDetailMove = useCallback(
@@ -211,11 +274,32 @@ export default function BoardScreen() {
 
   const handleOpenEdit = useCallback(() => {
     if (!detailInsight) return;
+    const activeEditors = broadcastState.editing[detailInsight.id] ?? [];
+    if (activeEditors.length > 0) {
+      Alert.alert(
+        `${activeEditors[0].userName} is editing…`,
+        "What would you like to do?",
+        [
+          { text: "View Only", style: "cancel" },
+          {
+            text: "Edit Anyway",
+            style: "destructive",
+            onPress: () => {
+              emitSignal("editing", detailInsight.id, "start");
+              setEditingInsight(detailInsight);
+              pendingEditRef.current = true;
+              setShowDetail(false);
+            },
+          },
+        ],
+      );
+      return;
+    }
     emitSignal("editing", detailInsight.id, "start");
     setEditingInsight(detailInsight);
     pendingEditRef.current = true;
     setShowDetail(false);
-  }, [detailInsight, emitSignal]);
+  }, [detailInsight, broadcastState, emitSignal]);
 
   const handleOpenCreate = useCallback(() => {
     setEditingInsight(null);
@@ -268,11 +352,18 @@ export default function BoardScreen() {
         refetch();
       } catch (err) {
         if (err instanceof ConflictError) {
-          setConflictState({
+          // Park conflict data and close the form sheet first.
+          // iOS doesn't support a Modal rendered on top of another Modal —
+          // onClosed on the form's DetailSheet will show ConflictModal once
+          // the sheet is fully unmounted.
+          pendingConflictRef.current = {
             fields: err.fields,
             serverNode: err.serverNode,
             pendingValues: values,
-          });
+          };
+          if (editingInsight) emitSignal("editing", editingInsight.id, "stop");
+          formIsDirtyRef.current = false;
+          setShowForm(false);
         }
         // Non-conflict error toast already shown inside the hook
       } finally {
@@ -296,7 +387,14 @@ export default function BoardScreen() {
     } finally {
       setSubmitting(false);
     }
-  }, [conflictState, editingInsight, update, refetchDetail, closeForm, refetch]);
+  }, [
+    conflictState,
+    editingInsight,
+    update,
+    refetchDetail,
+    closeForm,
+    refetch,
+  ]);
 
   const handleKeepTheirs = useCallback(() => {
     setConflictState(null);
@@ -310,11 +408,26 @@ export default function BoardScreen() {
       const { pendingValues, serverNode } = conflictState;
       const merged: InsightFormValues = {
         ...pendingValues,
-        title: choices["title"] === "theirs" ? serverNode.title : pendingValues.title,
-        description: choices["description"] === "theirs" ? serverNode.description : pendingValues.description,
-        stage: choices["stage"] === "theirs" ? (serverNode.stage as InsightFormValues["stage"]) : pendingValues.stage,
-        priority: choices["priority"] === "theirs" ? (serverNode.priority as InsightFormValues["priority"]) : pendingValues.priority,
-        drugName: choices["drugName"] === "theirs" ? serverNode.drugName : pendingValues.drugName,
+        title:
+          choices["title"] === "theirs"
+            ? serverNode.title
+            : pendingValues.title,
+        description:
+          choices["description"] === "theirs"
+            ? serverNode.description
+            : pendingValues.description,
+        stage:
+          choices["stage"] === "theirs"
+            ? (serverNode.stage as InsightFormValues["stage"])
+            : pendingValues.stage,
+        priority:
+          choices["priority"] === "theirs"
+            ? (serverNode.priority as InsightFormValues["priority"])
+            : pendingValues.priority,
+        drugName:
+          choices["drugName"] === "theirs"
+            ? serverNode.drugName
+            : pendingValues.drugName,
       };
       setSubmitting(true);
       try {
@@ -361,7 +474,20 @@ export default function BoardScreen() {
   useLayoutEffect(() => {
     navigation.setOptions({
       headerRight: () => (
-        <View style={{ marginRight: 12 }}>
+        <View style={styles.headerRight}>
+          <TouchableOpacity
+            onPress={() =>
+              setViewMode((m) => (m === "list" ? "kanban" : "list"))
+            }
+            accessibilityLabel={
+              viewMode === "list" ? "Switch to Overview" : "Switch to List View"
+            }
+            style={styles.viewToggle}
+          >
+            <Text style={styles.viewToggleText}>
+              {viewMode === "list" ? "⊞" : "☰"}
+            </Text>
+          </TouchableOpacity>
           <OnlineAvatars
             users={onlineUsers}
             currentUserId={currentUser?.id ?? ""}
@@ -369,37 +495,66 @@ export default function BoardScreen() {
         </View>
       ),
     });
-  }, [onlineUsers, currentUser, navigation]);
+  }, [onlineUsers, currentUser, navigation, viewMode]);
   return (
     <View style={styles.container}>
-      <PipelineBar
-        selectedStage={selectedStage}
-        counts={counts}
-        onSelectStage={setSelectedStage}
-      />
-      <FilterBar
-        search={search}
-        onSearchChange={setSearch}
-        selectedPriorities={selectedPriorities}
-        onTogglePriority={handleTogglePriority}
-        onClearAll={handleClearAll}
-      />
-      <InsightCardList
-        insights={insights}
-        stage={selectedStage}
-        filter={filter}
-        loading={loading}
-        onRefresh={refetch}
-        onPressCard={handlePressCard}
-        onLongPressCard={handleLongPress}
-        onEndReached={loadMore}
-        broadcastState={broadcastState}
-        onEmitSignal={emitSignal}
-        onEditAnyway={handleEditAnyway}
-        highlightedCardId={highlightedCardId}
-      />
+      {/* Stage list or kanban overview — mutually exclusive */}
+      {viewMode === "kanban" ? (
+        <KanbanOverview
+          stages={kanbanStages}
+          loading={kanbanLoading}
+          onRefresh={refetchKanban}
+          onSelectStage={handleSelectKanbanStage}
+        />
+      ) : reorderMode ? (
+        <>
+          <PipelineBar
+            selectedStage={selectedStage}
+            counts={counts}
+            onSelectStage={(stage) => {
+              setSelectedStage(stage);
+              setReorderMode(false);
+            }}
+          />
+          <DraggableInsightList
+            insights={insights}
+            onPressCard={handlePressCard}
+            onExitReorder={() => setReorderMode(false)}
+            onReorderDone={handleReorderDone}
+          />
+        </>
+      ) : (
+        <>
+          <PipelineBar
+            selectedStage={selectedStage}
+            counts={counts}
+            onSelectStage={setSelectedStage}
+          />
+          <FilterBar
+            search={filters.search}
+            onSearchChange={(text) => setFilters((f) => ({ ...f, search: text }))}
+            activeFilterCount={countActiveFilters(filters)}
+            chips={activeChips}
+            onOpenSheet={() => setShowFilterSheet(true)}
+          />
+          <InsightCardList
+            insights={insights}
+            stage={selectedStage}
+            filter={filter}
+            loading={loading}
+            onRefresh={refetch}
+            onPressCard={handlePressCard}
+            onLongPressCard={handleLongPress}
+            onEndReached={loadMore}
+            broadcastState={broadcastState}
+            onEmitSignal={emitSignal}
+            onEditAnyway={handleEditAnyway}
+            highlightedCardId={highlightedCardId}
+          />
+        </>
+      )}
 
-      {/* Floating activity bell */}
+      {/* Floating activity bell — always visible */}
       <TouchableOpacity
         style={styles.bellButton}
         onPress={() => {
@@ -427,6 +582,7 @@ export default function BoardScreen() {
         loading={feedLoading}
         onTapEntry={handleTapActivity}
       />
+
       {/* FAB — create new insight */}
       <TouchableOpacity
         style={styles.fab}
@@ -457,7 +613,11 @@ export default function BoardScreen() {
           onEdit={handleOpenEdit}
           onMove={handleDetailMove}
           highlightedFields={highlightedFields}
-          viewers={detailInsightId ? (broadcastState.viewing[detailInsightId] ?? []) : []}
+          viewers={
+            detailInsightId
+              ? (broadcastState.viewing[detailInsightId] ?? [])
+              : []
+          }
         />
       </DetailSheet>
 
@@ -466,6 +626,12 @@ export default function BoardScreen() {
         visible={showForm}
         onClose={closeForm}
         onCloseRequest={handleFormCloseRequest}
+        onClosed={() => {
+          if (pendingConflictRef.current) {
+            setConflictState(pendingConflictRef.current);
+            pendingConflictRef.current = null;
+          }
+        }}
       >
         <InsightForm
           key={editingInsight?.id ?? "new"}
@@ -476,6 +642,14 @@ export default function BoardScreen() {
           onCancel={closeForm}
           onDirtyChange={handleDirtyChange}
         />
+      </DetailSheet>
+
+      {/* Filter sheet */}
+      <DetailSheet
+        visible={showFilterSheet}
+        onClose={() => setShowFilterSheet(false)}
+      >
+        <FilterSheet filters={filters} onChange={setFilters} />
       </DetailSheet>
 
       {/* Conflict resolution modal */}
@@ -493,6 +667,19 @@ export default function BoardScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
+  headerRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginRight: 12,
+  },
+  viewToggle: {
+    padding: 4,
+  },
+  viewToggleText: {
+    fontSize: 22,
+    color: Colors.white,
+  },
   fab: {
     position: "absolute",
     bottom: 24,
@@ -518,7 +705,7 @@ const styles = StyleSheet.create({
   bellButton: {
     position: "absolute",
     bottom: 24,
-    right: 20,
+    right: 84,
     width: 52,
     height: 52,
     borderRadius: 26,

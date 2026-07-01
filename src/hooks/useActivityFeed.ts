@@ -110,7 +110,17 @@ export function useActivityFeed(currentUserId: string | null) {
     isOpenRef.current = false;
   };
 
-  return { activities, unreadCount, loading, markRead, markClosed };
+  const refetch = async () => {
+    try {
+      const { data } = await apolloClient.query({
+        query: LIST_ACTIVITIES,
+        fetchPolicy: 'network-only',
+      });
+      setActivities(transformActivities(data));
+    } catch { /* ignore */ }
+  };
+
+  return { activities, unreadCount, loading, markRead, markClosed, refetch };
 }
 
 function transformActivities(data: Record<string, unknown>): ActivityEntry[] {

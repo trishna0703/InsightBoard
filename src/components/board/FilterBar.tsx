@@ -7,35 +7,36 @@ import {
   ScrollView,
   StyleSheet,
 } from "react-native";
-import { Priority } from "../../types";
 import { Colors } from "../../constants/colors";
 
-const PRIORITIES: Priority[] = ["P1", "P2", "P3", "P4"];
+export interface ActiveChip {
+  key: string;
+  label: string;
+  onRemove: () => void;
+}
 
 interface FilterBarProps {
   search: string;
   onSearchChange: (text: string) => void;
-  selectedPriorities: Priority[];
-  onTogglePriority: (priority: Priority) => void;
-  onClearAll: () => void;
+  activeFilterCount: number;
+  chips: ActiveChip[];
+  onOpenSheet: () => void;
 }
 
 export default function FilterBar({
   search,
   onSearchChange,
-  selectedPriorities,
-  onTogglePriority,
-  onClearAll,
+  activeFilterCount,
+  chips,
+  onOpenSheet,
 }: FilterBarProps) {
-  const hasActiveFilters = search.length > 0 || selectedPriorities.length > 0;
-
   return (
     <View style={styles.wrapper}>
-      {/* Search input */}
+      {/* Row 1: Search input + Filters button */}
       <View style={styles.searchRow}>
         <TextInput
           style={styles.searchInput}
-          placeholder="Search insights..."
+          placeholder="Search insights…"
           placeholderTextColor={Colors.textSecondary}
           value={search}
           onChangeText={onSearchChange}
@@ -43,49 +44,40 @@ export default function FilterBar({
           clearButtonMode="while-editing"
           accessibilityLabel="Search insights"
         />
+        <TouchableOpacity
+          style={styles.filterBtn}
+          onPress={onOpenSheet}
+          accessibilityLabel={`Filters${activeFilterCount > 0 ? `, ${activeFilterCount} active` : ""}`}
+        >
+          <Text style={styles.filterIcon}>⚙</Text>
+          {activeFilterCount > 0 && (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>{activeFilterCount}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
       </View>
 
-      {/* Priority chips + clear all */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.chipsRow}
-      >
-        {PRIORITIES.map((priority) => {
-          const isSelected = selectedPriorities.includes(priority);
-          return (
+      {/* Row 2: Active filter chips */}
+      {chips.length > 0 && (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.chipsRow}
+        >
+          {chips.map((chip) => (
             <TouchableOpacity
-              key={priority}
-              style={[
-                styles.chip,
-                isSelected && {
-                  backgroundColor: Colors.priority[priority],
-                  borderColor: Colors.priority[priority],
-                },
-              ]}
-              onPress={() => onTogglePriority(priority)}
-              accessibilityLabel={`Filter by ${priority}${isSelected ? ", active" : ""}`}
-              accessibilityRole="checkbox"
+              key={chip.key}
+              style={styles.activeChip}
+              onPress={chip.onRemove}
+              accessibilityLabel={`Remove ${chip.label} filter`}
             >
-              <Text
-                style={[styles.chipText, isSelected && styles.chipTextSelected]}
-              >
-                {priority}
-              </Text>
+              <Text style={styles.activeChipText}>{chip.label}</Text>
+              <Text style={styles.activeChipX}> ✕</Text>
             </TouchableOpacity>
-          );
-        })}
-
-        {hasActiveFilters && (
-          <TouchableOpacity
-            style={styles.clearChip}
-            onPress={onClearAll}
-            accessibilityLabel="Clear all filters"
-          >
-            <Text style={styles.clearText}>✕ Clear all</Text>
-          </TouchableOpacity>
-        )}
-      </ScrollView>
+          ))}
+        </ScrollView>
+      )}
     </View>
   );
 }
@@ -96,13 +88,17 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
     paddingTop: 8,
-    paddingBottom: 4,
+    paddingBottom: 6,
   },
   searchRow: {
+    flexDirection: "row",
+    alignItems: "center",
     paddingHorizontal: 12,
-    marginBottom: 8,
+    gap: 8,
+    marginBottom: 4,
   },
   searchInput: {
+    flex: 1,
     backgroundColor: Colors.background,
     borderRadius: 10,
     paddingHorizontal: 14,
@@ -112,38 +108,52 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
   },
+  filterBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  filterIcon: { fontSize: 18 },
+  badge: {
+    position: "absolute",
+    top: -4,
+    right: -4,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: Colors.primary[500],
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  badgeText: { fontSize: 9, color: Colors.white, fontWeight: "700" },
   chipsRow: {
     paddingHorizontal: 12,
-    gap: 8,
-    paddingBottom: 8,
+    gap: 6,
+    paddingBottom: 4,
   },
-  chip: {
-    borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingVertical: 5,
-    borderWidth: 1.5,
-    borderColor: Colors.border,
-    backgroundColor: Colors.white,
+  activeChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: 16,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    backgroundColor: Colors.primary[500] + "18",
+    borderWidth: 1,
+    borderColor: Colors.primary[500] + "55",
   },
-  chipText: {
-    fontSize: 12,
+  activeChipText: {
+    fontSize: 11,
     fontWeight: "600",
-    color: Colors.textSecondary,
+    color: Colors.primary[700],
   },
-  chipTextSelected: {
-    color: Colors.white,
-  },
-  clearChip: {
-    borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingVertical: 5,
-    borderWidth: 1.5,
-    borderColor: Colors.system.error,
-    backgroundColor: Colors.white,
-  },
-  clearText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: Colors.system.error,
+  activeChipX: {
+    fontSize: 10,
+    color: Colors.primary[500],
+    fontWeight: "700",
   },
 });
