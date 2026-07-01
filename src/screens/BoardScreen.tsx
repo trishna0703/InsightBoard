@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useLayoutEffect } from "react";
+import React, { useState, useCallback, useRef, useLayoutEffect, useEffect } from "react";
 import {
   View,
   StyleSheet,
@@ -53,6 +53,10 @@ export default function BoardScreen() {
   const [showForm, setShowForm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
+  // Fields in the detail panel to highlight yellow (remote user just edited them)
+  const [highlightedFields, setHighlightedFields] = useState<string[]>([]);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Track the form's dirty state without causing re-renders
   const formIsDirtyRef = useRef(false);
   // Set to true when Edit is tapped — consumed by the detail sheet's onClosed
@@ -61,7 +65,22 @@ export default function BoardScreen() {
 
   const debouncedSearch = useDebounce(search, 300);
 
-  useRealtimeBoard(currentUser?.id ?? null);
+  const handleDetailChanged = useCallback((fields: string[]) => {
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    setHighlightedFields(fields);
+    highlightTimerRef.current = setTimeout(() => setHighlightedFields([]), 1500);
+  }, []);
+
+  // Clear the timer on unmount
+  useEffect(() => () => {
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+  }, []);
+
+  useRealtimeBoard(
+    currentUser?.id ?? null,
+    showDetail ? detailInsightId : null,
+    handleDetailChanged,
+  );
 
   const { onlineUsers } = usePresence(currentUser);
 
@@ -278,6 +297,7 @@ export default function BoardScreen() {
           loading={detailLoading}
           onEdit={handleOpenEdit}
           onMove={handleDetailMove}
+          highlightedFields={highlightedFields}
         />
       </DetailSheet>
 

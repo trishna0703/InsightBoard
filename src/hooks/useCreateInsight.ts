@@ -7,6 +7,7 @@ import { GET_STAGE_COUNTS } from '../graphql/queries/insights';
 import { InsightFormValues } from '../schemas/insightForm';
 import { STAGE_VALUES } from './useInsights';
 import { supabase } from '../services/supabase';
+import { sendBoardBroadcast } from './useRealtimeBoard';
 import Toast from 'react-native-toast-message';
 
 export function useCreateInsight() {
@@ -20,6 +21,11 @@ export function useCreateInsight() {
       // reading from a useState that may not have resolved yet.
       const { data: { session } } = await supabase.auth.getSession();
       const userId = session?.user?.id;
+      const userName =
+        (session?.user?.user_metadata?.name as string | undefined) ??
+        (session?.user?.user_metadata?.full_name as string | undefined) ??
+        session?.user?.email ??
+        'Someone';
       if (!userId) {
         Toast.show({ type: 'error', text1: 'Not authenticated', position: 'bottom' });
         throw new Error('Not authenticated');
@@ -70,6 +76,16 @@ export function useCreateInsight() {
         });
         throw err;
       }
+
+      // Broadcast to other users so they see the toast and fade-in animation.
+      sendBoardBroadcast({
+        action: 'created',
+        userId,
+        userName,
+        insightId,
+        title: values.title,
+        stage: STAGE_VALUES[values.stage],
+      });
 
       // Await the activity so it's present the next time the detail panel opens.
       await createActivity({

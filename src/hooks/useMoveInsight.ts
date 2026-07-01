@@ -6,7 +6,7 @@ import { LIST_INSIGHTS, GET_STAGE_COUNTS } from "../graphql/queries/insights";
 import { Insight, InsightStage } from "../types";
 import { STAGE_VALUES, InsightsQueryFilter } from "./useInsights";
 import Toast from "react-native-toast-message";
-import { trackMutation } from './useRealtimeBoard';
+import { sendBoardBroadcast } from './useRealtimeBoard';
 import { supabase } from "../services/supabase";
 
 
@@ -50,7 +50,14 @@ export function useMoveInsight() {
       sourceFilter: InsightsQueryFilter
     ) => {
       try {
-        trackMutation(insight.id);
+        // Fetch session once — used for both broadcast and activity log.
+        const { data: { session } } = await supabase.auth.getSession();
+        const userId = session?.user?.id;
+        const userName =
+          (session?.user?.user_metadata?.name as string | undefined) ??
+          (session?.user?.user_metadata?.full_name as string | undefined) ??
+          session?.user?.email ??
+          'Someone';
 
         await updateInsight({
           variables: {
@@ -146,25 +153,35 @@ export function useMoveInsight() {
           },
         });
 
-        void (async () => {
-          const { data: { session } } = await supabase.auth.getSession();
-          const userId = session?.user?.id;
-          if (userId) {
-            void createActivity({
-              variables: {
-                objects: [{
-                  insightId: insight.id,
-                  userId,
-                  teamId: process.env.EXPO_PUBLIC_TEAM_ID ?? '',
-                  action: 'moved',
-                  fieldName: 'stage',
-                  oldValue: STAGE_VALUES[insight.stage],
-                  newValue: STAGE_VALUES[targetStage],
-                }],
-              },
-            }).catch(() => null);
-          }
-        })();
+        // Broadcast to other users (echo-suppressed on their end by userId check).
+        if (userId) {
+          sendBoardBroadcast({
+            action: 'moved',
+            userId,
+            userName,
+            insightId: insight.id,
+            title: insight.title,
+            fromStage: insight.stage,
+            toStage: targetStage,
+          });
+        }
+
+        // Activity log — fire-and-forget, uses userId already fetched above.
+        if (userId) {
+          void createActivity({
+            variables: {
+              objects: [{
+                insightId: insight.id,
+                userId,
+                teamId: process.env.EXPO_PUBLIC_TEAM_ID ?? '',
+                action: 'moved',
+                fieldName: 'stage',
+                oldValue: STAGE_VALUES[insight.stage],
+                newValue: STAGE_VALUES[targetStage],
+              }],
+            },
+          }).catch(() => null);
+        }
 
         Toast.show({
           type: "success",

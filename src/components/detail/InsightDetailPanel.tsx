@@ -24,11 +24,21 @@ interface InsightDetailPanelProps {
   loading: boolean;
   onEdit: () => void;
   onMove: (targetStage: InsightStage) => void;
+  /** Field names currently highlighted yellow (remote user just edited them). */
+  highlightedFields?: string[];
 }
 
-function FieldRow({ label, value }: { label: string; value: string }) {
+function FieldRow({
+  label,
+  value,
+  highlighted,
+}: {
+  label: string;
+  value: string;
+  highlighted?: boolean;
+}) {
   return (
-    <View style={styles.fieldRow}>
+    <View style={[styles.fieldRow, highlighted && styles.highlightRow]}>
       <Text style={styles.fieldLabel}>{label}</Text>
       <Text style={styles.fieldValue}>{value}</Text>
     </View>
@@ -40,7 +50,9 @@ export default function InsightDetailPanel({
   loading,
   onEdit,
   onMove,
+  highlightedFields = [],
 }: InsightDetailPanelProps) {
+  const hl = (field: string) => highlightedFields.includes(field);
   if (loading && !insight) {
     return (
       <View style={styles.center}>
@@ -98,25 +110,29 @@ export default function InsightDetailPanel({
       </View>
 
       {/* Title */}
-      <Text style={styles.title}>{insight.title}</Text>
+      <Text style={[styles.title, hl('title') && styles.highlightText]}>
+        {insight.title}
+      </Text>
 
       {/* Description */}
-      <Text style={styles.description}>{insight.description}</Text>
+      <Text style={[styles.description, hl('description') && styles.highlightText]}>
+        {insight.description}
+      </Text>
 
       {/* Meta */}
       <View style={styles.metaBlock}>
         {insight.hcp && (
           <>
-            <FieldRow label="HCP" value={insight.hcp.name} />
-            <FieldRow label="Specialty" value={insight.hcp.specialty} />
-            <FieldRow label="Institution" value={insight.hcp.institution} />
+            <FieldRow label="HCP" value={insight.hcp.name} highlighted={hl('hcp')} />
+            <FieldRow label="Specialty" value={insight.hcp.specialty} highlighted={hl('hcp')} />
+            <FieldRow label="Institution" value={insight.hcp.institution} highlighted={hl('hcp')} />
           </>
         )}
         {insight.category && (
-          <FieldRow label="Category" value={insight.category} />
+          <FieldRow label="Category" value={insight.category} highlighted={hl('category')} />
         )}
         {insight.drugName && (
-          <FieldRow label="Drug" value={insight.drugName} />
+          <FieldRow label="Drug" value={insight.drugName} highlighted={hl('drugName')} />
         )}
         {insight.tags.length > 0 && (
           <View style={styles.fieldRow}>
@@ -234,6 +250,16 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'flex-start',
     gap: 8,
+  },
+  highlightRow: {
+    backgroundColor: '#FFF176',
+    borderRadius: 4,
+    paddingHorizontal: 4,
+    marginHorizontal: -4,
+  },
+  highlightText: {
+    backgroundColor: '#FFF176',
+    borderRadius: 4,
   },
   fieldLabel: {
     fontSize: 12,

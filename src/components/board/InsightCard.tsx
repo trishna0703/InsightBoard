@@ -1,13 +1,15 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
+  Animated,
 } from "react-native";
 import { Insight } from "../../types";
 import { Colors } from "../../constants/colors";
 import { getRelativeTime } from "../../utils/dateUtils";
+import { recentlyArrivedIds } from "../../hooks/useRealtimeBoard";
 
 interface InsightCardProps {
   insight: Insight;
@@ -20,7 +22,23 @@ export default function InsightCard({
   onPress,
   onLongPress,
 }: InsightCardProps) {
+  // Play a fade-in when this card just arrived from another user's create.
+  const isNewArrival = useRef(recentlyArrivedIds.has(insight.id)).current;
+  const fadeAnim = useRef(new Animated.Value(isNewArrival ? 0 : 1)).current;
+
+  useEffect(() => {
+    if (!isNewArrival) return;
+    // Remove immediately so a re-mount (FlashList recycle) doesn't re-animate.
+    recentlyArrivedIds.delete(insight.id);
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: 600,
+      useNativeDriver: true,
+    }).start();
+  }, []); // mount only
+
   return (
+    <Animated.View style={{ opacity: fadeAnim }}>
     <TouchableOpacity
       style={styles.card}
       onPress={() => onPress(insight)}
@@ -69,6 +87,7 @@ export default function InsightCard({
         )}
       </View>
     </TouchableOpacity>
+    </Animated.View>
   );
 }
 
